@@ -2,7 +2,7 @@
 VectraFi Agent Swarm Orchestrator
 ====================================
 Sandbox simulation — workspace/ only. No MCP network calls; uses bank_ledger
-and bank_settlement directly for full transactional integrity.
+directly for full transactional integrity.
 
 Simulates a 3-step autonomous agent cluster cycle:
   Step 1: agent-zero inspects the active bounty state (MCP read via faba_server tools).
@@ -11,49 +11,162 @@ Simulates a 3-step autonomous agent cluster cycle:
 
 All state writes go to workspace/bank.db only.
 Telemetry is appended to workspace/agents/agent-zero/cost_log.jsonl.
+
+Security changes (C-1, C-2, C-4):
+  - Removed importlib.util.exec_module loading of validated/ artifacts.  Those
+    ran untrusted Python code in-process with full parent privileges and polluted
+    sys.modules with unqualified short names, enabling origin-blind schema
+    substitution by any file that landed in workspace/validated/.
+  - LeaseTerms is now a Pydantic BaseModel owned by this orchestrator.
+    calculate_lease() serialises inputs to JSON and validates via
+    model_validate_json(), treating cross-agent schema data as pure data
+    rather than executable Python modules.
+  - Pool math and bounty settlement are inlined; no dynamic code loading from
+    validated/ at any point in the swarm execution path.
+  - bank_ledger (workspace root, first-party) is imported via sys.path +
+    regular import — not exec_module — to preserve normal module semantics.
 """
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import sys
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field, model_validator
 
 # ---------------------------------------------------------------------------
-# Module loader
+# Path resolution
 # ---------------------------------------------------------------------------
 
 _WORKSPACE = Path(__file__).resolve().parent
 
+# Add workspace root to sys.path so bank_ledger can be imported with a standard
+# import statement.  bank_ledger.py lives at the workspace root (not in
+# validated/) and is first-party trusted code; this replaces the previous
+# exec_module pattern.
+if str(_WORKSPACE) not in sys.path:
+    sys.path.insert(0, str(_WORKSPACE))
 
-def _load(name: str, rel: str):
-    if name in sys.modules:
-        return sys.modules[name]
-    path = _WORKSPACE / rel
-    spec = importlib.util.spec_from_file_location(name, path)
-    mod = importlib.util.module_from_spec(spec)   # type: ignore[arg-type]
-    sys.modules[name] = mod
-    spec.loader.exec_module(mod)                  # type: ignore[union-attr]
-    return mod
+import bank_ledger  # noqa: E402 — intentional: import after sys.path setup
+
+init_db                   = bank_ledger.init_db
+get_balance               = bank_ledger.get_balance
+get_connection            = bank_ledger.get_connection
+list_wallets              = bank_ledger.list_wallets
+execute_agent_transaction = bank_ledger.execute_agent_transaction
+
+_DB_PATH  = bank_ledger._DB_PATH
+_COST_LOG = _WORKSPACE / "agents" / "agent-zero" / "cost_log.jsonl"
 
 
-_ledger     = _load("bank_ledger",      "bank_ledger.py")
-_settlement = _load("bank_settlement",  "validated/bank_settlement.py")
-_pooler     = _load("liquidity_pooler", "validated/liquidity_pooler.py")
+# ---------------------------------------------------------------------------
+# Trusted Pydantic schema — replaces cross-agent importlib token_lease loading
+# ---------------------------------------------------------------------------
 
-init_db                   = _ledger.init_db
-get_balance               = _ledger.get_balance
-get_connection            = _ledger.get_connection
-list_wallets              = _ledger.list_wallets
-execute_agent_transaction = _ledger.execute_agent_transaction
-claim_bounty              = _settlement.claim_bounty
-pool_leases               = _pooler.pool_leases
-calculate_lease           = _pooler.calculate_lease
+TimeUnit = Literal["hour", "day", "week"]
 
-_DB_PATH   = _ledger._DB_PATH
-_COST_LOG  = _WORKSPACE / "agents" / "agent-zero" / "cost_log.jsonl"
+_SECONDS: dict[str, int] = {"hour": 3_600, "day": 86_400, "week": 604_800}
+
+
+class LeaseTerms(BaseModel):
+    """
+    Validated lease terms schema owned by this orchestrator.
+
+    total_fee and expiry_epoch are derived from base fields at validation time
+    and cannot be overridden by caller-supplied values — the before-validator
+    always recomputes them.
+    """
+    model_config = {"frozen": True}
+
+    principal: float = Field(..., gt=0)
+    duration_units: int = Field(..., gt=0)
+    time_unit: TimeUnit = "day"
+    micro_tax_rate: float = Field(..., gt=0, lt=1)
+    total_fee: float = Field(default=0.0)
+    expiry_epoch: int = Field(default=0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _compute_derived(cls, data: Any) -> Any:
+        """Compute total_fee and expiry_epoch from base fields before the model is frozen."""
+        if isinstance(data, dict):
+            data = dict(data)  # avoid mutating the caller's dict
+            p  = float(data.get("principal", 0))
+            d  = int(data.get("duration_units", 0))
+            r  = float(data.get("micro_tax_rate", 0))
+            tu = str(data.get("time_unit", "day"))
+            data["total_fee"]    = round(p * r * d, 8)
+            data["expiry_epoch"] = int(time.time()) + d * _SECONDS.get(tu, 86_400)
+        return data
+
+
+def calculate_lease(
+    principal: float,
+    duration_units: int,
+    time_unit: TimeUnit = "day",
+    micro_tax_rate: float = 0.001,
+) -> LeaseTerms:
+    """
+    Build and validate a LeaseTerms instance via JSON round-trip.
+
+    Serialising inputs with json.dumps and deserialising with model_validate_json
+    treats lease properties as pure data, ensuring no Python object coercion
+    path and validating against the trusted Pydantic schema owned by this
+    orchestrator (Fix C-4).
+    """
+    payload = json.dumps({
+        "principal": principal,
+        "duration_units": duration_units,
+        "time_unit": time_unit,
+        "micro_tax_rate": micro_tax_rate,
+    })
+    return LeaseTerms.model_validate_json(payload)
+
+
+# ---------------------------------------------------------------------------
+# Pool yield distribution
+# ---------------------------------------------------------------------------
+
+@dataclass
+class PoolYieldDistribution:
+    total_pool_yield: float
+    expiry_epoch: int
+    shares: dict[str, float] = field(default_factory=dict)
+    weights: dict[str, float] = field(default_factory=dict)
+
+
+def pool_leases(
+    agent_leases: list[tuple[str, LeaseTerms, float]],
+) -> PoolYieldDistribution:
+    """
+    Distribute pool yield across participants weighted by principal × risk_multiplier.
+    All inputs are validated LeaseTerms instances — no dynamic code loading.
+    """
+    if not agent_leases:
+        raise ValueError("Pool must have at least one participant")
+
+    total_yield = sum(lease.total_fee for _, lease, _ in agent_leases)
+    expiry      = min(lease.expiry_epoch for _, lease, _ in agent_leases)
+
+    raw_weights = {aid: lease.principal * rm for aid, lease, rm in agent_leases}
+    weight_sum  = sum(raw_weights.values())
+    if weight_sum == 0:
+        raise ArithmeticError("Aggregate pool weight is zero — cannot distribute")
+
+    norm_weights = {aid: w / weight_sum for aid, w in raw_weights.items()}
+    shares = {aid: round(total_yield * w, 8) for aid, w in norm_weights.items()}
+
+    return PoolYieldDistribution(
+        total_pool_yield=round(total_yield, 8),
+        expiry_epoch=expiry,
+        shares=shares,
+        weights=norm_weights,
+    )
+
 
 # ---------------------------------------------------------------------------
 # Telemetry
@@ -141,7 +254,7 @@ def step2_pool_arrangement(
 
 
 # ---------------------------------------------------------------------------
-# Step 3 — Live settlement: micro-tax deduction → treasury
+# Step 3 — Settlement: inline bounty claim with micro-tax → treasury
 # ---------------------------------------------------------------------------
 
 def step3_settle(
@@ -149,21 +262,74 @@ def step3_settle(
     counterpart_id: str,
     bounty_amount: int,
 ) -> dict:
-    """Execute the bounty settlement with 1.5% micro-tax routed to treasury."""
+    """
+    Inline bounty settlement — no validated/ module loading.
+
+    Derives the yield split via the trusted LeaseTerms Pydantic schema and
+    pool_leases, then calls bank_ledger.execute_agent_transaction directly.
+    Mirrors the logic previously in bank_settlement.claim_bounty; the
+    claimant's principal is 2× the counterpart's to model lead-claimant
+    contribution weighting.
+    """
     t0 = time.monotonic()
-    result = claim_bounty(claimant_id, bounty_amount, counterpart_id)
-    elapsed = (time.monotonic() - t0) * 1000
+
+    if claimant_id == counterpart_id:
+        raise ValueError("claimant and counterpart must differ")
+    if bounty_amount <= 0:
+        raise ValueError("bounty_amount must be positive")
+
+    lease_claimant    = calculate_lease(bounty_amount * 2, 1, "day", 0.01)
+    lease_counterpart = calculate_lease(bounty_amount,     1, "day", 0.01)
+
+    pool = pool_leases([
+        (claimant_id,    lease_claimant,    1.0),
+        (counterpart_id, lease_counterpart, 1.0),
+    ])
+
+    counterpart_share = round(bounty_amount * pool.weights[counterpart_id])
+    claimant_share    = bounty_amount - counterpart_share
+
+    transfers = []
+    if counterpart_share > 0:
+        tx = execute_agent_transaction(
+            sender_id=claimant_id,
+            receiver_id=counterpart_id,
+            amount=counterpart_share,
+            tx_type="bounty_yield_split",
+        )
+        transfers.append(tx)
+
+    conn = get_connection(_DB_PATH)
+    post_balances = {
+        claimant_id:    get_balance(claimant_id, conn),
+        counterpart_id: get_balance(counterpart_id, conn),
+        "treasury":     get_balance("treasury", conn),
+    }
+    conn.close()
+
+    total_tax = sum(t["tax_amount"] for t in transfers)
+    elapsed   = (time.monotonic() - t0) * 1000
 
     _log("step3_settlement", {
-        "claimant":            claimant_id,
-        "counterpart":         counterpart_id,
-        "bounty_amount":       result["bounty_amount"],
-        "claimant_share":      result["claimant_share"],
-        "counterpart_share":   result["counterpart_share"],
-        "tax_collected":       result["total_tax_collected"],
-        "post_balances":       result["post_balances"],
+        "claimant":          claimant_id,
+        "counterpart":       counterpart_id,
+        "bounty_amount":     bounty_amount,
+        "claimant_share":    claimant_share,
+        "counterpart_gross": counterpart_share,
+        "tax_collected":     total_tax,
+        "post_balances":     post_balances,
     }, elapsed)
-    return result
+
+    return {
+        "bounty_amount":       bounty_amount,
+        "claimant_id":         claimant_id,
+        "claimant_share":      claimant_share,
+        "counterpart_id":      counterpart_id,
+        "counterpart_share":   counterpart_share,
+        "total_tax_collected": total_tax,
+        "transfers":           transfers,
+        "post_balances":       post_balances,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -173,10 +339,8 @@ def step3_settle(
 def run_swarm() -> None:
     print("\n=== VectraFi Agent Swarm Orchestrator ===\n")
 
-    # Ensure DB is initialised with seed wallets
     init_db(_DB_PATH)
 
-    # Snapshot balances before simulation
     wallets_before = {w["agent_id"]: w["balance"] for w in list_wallets(_DB_PATH)}
     print(f"Initial balances: {wallets_before}\n")
     _log("swarm_start", {"initial_balances": wallets_before})

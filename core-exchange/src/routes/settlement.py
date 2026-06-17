@@ -1,11 +1,12 @@
 import logging
 import time
 import uuid
+from decimal import ROUND_DOWN, ROUND_UP, Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
-from sqlalchemy import func
+from sqlalchemy import func, select
 
 from database import get_db
 from models import AgentWallet, SettlementTransaction, TreasuryState
@@ -21,11 +22,40 @@ from schemas import (
 logger = logging.getLogger("vectrafi.settlement")
 router = APIRouter(prefix="/api/v1/settlement", tags=["settlement"])
 
-_MICRO_TAX_RATE: float = 0.015   # 1.5% — 15 basis points
+# Exact 1.5% using integer-ratio representation — no floating-point representation error.
+_TAX_NUMERATOR   = Decimal("15")
+_TAX_DENOMINATOR = Decimal("1000")
+_QUANTIZE_8      = Decimal("0.00000001")
+
+# B-3: minimum transfer floor eliminates zero-tax dust-splitting; base fee
+# prevents any transfer from escaping the protocol fee entirely.
+_MIN_TRANSFER = Decimal("0.0001")
+_MIN_FEE      = Decimal("0.00000001")
 
 
 def _now() -> int:
     return int(time.time())
+
+
+def _apply_tax(amount: Decimal) -> tuple[Decimal, Decimal]:
+    """Return (tax, net) at 8dp, ROUND_UP — protocol-favorable, neutralises dust evasion.
+
+    B-1: raises HTTP 400 for amounts below _MIN_TRANSFER (eliminates zero-tax dust regime).
+    B-2: ROUND_UP ensures every transfer above the floor pays at least 1 unit of tax.
+    B-3: max(raw_tax, _MIN_FEE) is a defensive floor for any residual edge case.
+    """
+    if amount < _MIN_TRANSFER:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Transfer amount {amount} USDC is below the minimum of "
+                f"{_MIN_TRANSFER} USDC"
+            ),
+        )
+    raw_tax = (amount * _TAX_NUMERATOR / _TAX_DENOMINATOR).quantize(_QUANTIZE_8, rounding=ROUND_UP)
+    tax = max(raw_tax, _MIN_FEE)
+    net = amount - tax
+    return tax, net
 
 
 def _get_wallet_or_404(db: Session, agent_id: str) -> AgentWallet:
@@ -41,15 +71,15 @@ def _get_wallet_or_404(db: Session, agent_id: str) -> AgentWallet:
 def _get_or_init_treasury(db: Session) -> TreasuryState:
     treasury = db.get(TreasuryState, 1)
     if treasury is None:
-        treasury = TreasuryState(id=1, accumulated_fees_usdc=0.0, bounty_pool_fees_usdc=0.0)
+        treasury = TreasuryState(id=1, accumulated_fees_usdc=Decimal("0"), bounty_pool_fees_usdc=Decimal("0"))
         db.add(treasury)
     return treasury
 
 
 def _execute_transfer(
     db: Session,
-    sender: AgentWallet,
-    receiver: AgentWallet,
+    sender_id: str,
+    receiver_id: str,
     amount_usdc: float,
     tx_type: str,
 ) -> SettlementTransaction:
@@ -58,32 +88,60 @@ def _execute_transfer(
     Deducts full amount from sender, skims 1.5% tax to treasury, credits
     net to receiver. Raises HTTP 400 on insufficient sender balance.
     All mutations are flushed but NOT committed here — caller owns the commit.
-    """
-    tax_amount  = round(amount_usdc * _MICRO_TAX_RATE, 8)
-    net_amount  = round(amount_usdc - tax_amount, 8)
 
-    if sender.balance_usdc < amount_usdc:
+    A-1: acquires SELECT … FOR UPDATE on both wallet rows in consistent
+         alphabetical key order before reading balances, closing the TOCTOU
+         double-spend window under concurrent requests.  On SQLite this
+         escalates to a database-level lock (harmless for dev); on Postgres
+         it is a true row-level exclusive lock.
+    B-3: minimum transfer enforced by _apply_tax; ROUND_UP prevents zero-tax dust.
+    """
+    amount = Decimal(str(amount_usdc))
+    tax_amount, net_amount = _apply_tax(amount)  # raises HTTP 400 if below _MIN_TRANSFER
+
+    # Lock both rows in alphabetical order to prevent deadlocks when two
+    # concurrent transfers share a wallet in opposite directions.
+    lock_ids: list[str] = sorted([sender_id, receiver_id])
+    locked: dict[str, AgentWallet] = {
+        w.agent_id: w
+        for w in db.execute(
+            select(AgentWallet)
+            .where(AgentWallet.agent_id.in_(lock_ids))
+            .with_for_update()
+            .order_by(AgentWallet.agent_id)
+        ).scalars().all()
+    }
+
+    sender   = locked.get(sender_id)
+    receiver = locked.get(receiver_id)
+    if sender is None or receiver is None:
+        missing = sender_id if sender is None else receiver_id
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No wallet found for agent_id '{missing}'",
+        )
+
+    sender_balance = Decimal(str(sender.balance_usdc))
+    if sender_balance < amount:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
                 f"Insufficient balance: {sender.agent_id} has "
-                f"{sender.balance_usdc:.8f} USDC, needs {amount_usdc:.8f}"
+                f"{sender_balance:.8f} USDC, needs {amount:.8f}"
             ),
         )
 
-    sender.balance_usdc   = round(sender.balance_usdc - amount_usdc, 8)
-    receiver.balance_usdc = round(receiver.balance_usdc + net_amount, 8)
+    sender.balance_usdc   = sender_balance - amount
+    receiver.balance_usdc = Decimal(str(receiver.balance_usdc)) + net_amount
 
     treasury = _get_or_init_treasury(db)
-    treasury.accumulated_fees_usdc = round(
-        treasury.accumulated_fees_usdc + tax_amount, 8
-    )
+    treasury.accumulated_fees_usdc = Decimal(str(treasury.accumulated_fees_usdc)) + tax_amount
 
     tx = SettlementTransaction(
         tx_id=str(uuid.uuid4()),
-        sender_id=sender.agent_id,
-        receiver_id=receiver.agent_id,
-        gross_amount_usdc=amount_usdc,
+        sender_id=sender_id,
+        receiver_id=receiver_id,
+        gross_amount_usdc=amount,
         tax_amount_usdc=tax_amount,
         net_amount_usdc=net_amount,
         tx_type=tx_type,
@@ -107,6 +165,7 @@ async def settlement_transfer(
     Execute a signature-verified peer-to-peer USDC transfer with 1.5% micro-tax.
 
     Auth: X-VectraFi-Signature required (EIP-191 signature over compact JSON body).
+          Payload must include nonce, issued_at, and chain_id for replay protection.
     Tax:  1.5% of gross_amount deducted and routed to treasury.accumulated_fees_usdc.
     Atomicity: SQLAlchemy session rolls back on any error before commit.
     """
@@ -121,7 +180,7 @@ async def settlement_transfer(
     sender   = _get_wallet_or_404(db, payload.agent_id)
     receiver = _get_wallet_or_404(db, payload.receiver_id)
 
-    tx = _execute_transfer(db, sender, receiver, payload.amount_usdc, payload.tx_type)
+    tx = _execute_transfer(db, payload.agent_id, payload.receiver_id, payload.amount_usdc, payload.tx_type)
 
     db.commit()
     db.refresh(sender)
@@ -138,13 +197,13 @@ async def settlement_transfer(
         tx_id=tx.tx_id,
         sender_id=tx.sender_id,
         receiver_id=tx.receiver_id,
-        gross_amount_usdc=tx.gross_amount_usdc,
-        tax_amount_usdc=tx.tax_amount_usdc,
-        net_amount_usdc=tx.net_amount_usdc,
+        gross_amount_usdc=float(tx.gross_amount_usdc),
+        tax_amount_usdc=float(tx.tax_amount_usdc),
+        net_amount_usdc=float(tx.net_amount_usdc),
         tx_type=tx.tx_type,
-        sender_balance_usdc=sender.balance_usdc,
-        receiver_balance_usdc=receiver.balance_usdc,
-        treasury_accumulated_fees_usdc=treasury.accumulated_fees_usdc,
+        sender_balance_usdc=float(sender.balance_usdc),
+        receiver_balance_usdc=float(receiver.balance_usdc),
+        treasury_accumulated_fees_usdc=float(treasury.accumulated_fees_usdc),
     )
 
 
@@ -165,7 +224,7 @@ async def claim_bounty(
       2. Executes a signed transfer claimant -> counterpart (1.5% tax deducted).
       3. The claimant retains the remainder in their wallet untouched.
 
-    Auth: X-VectraFi-Signature required.
+    Auth: X-VectraFi-Signature required (with nonce/issued_at/chain_id).
     """
     payload = await verify_signed_payload(request, db, BountyClaimRequest)
 
@@ -178,10 +237,12 @@ async def claim_bounty(
     claimant    = _get_wallet_or_404(db, payload.agent_id)
     counterpart = _get_wallet_or_404(db, payload.counterpart_id)
 
-    counterpart_gross = round(payload.bounty_amount_usdc * payload.counterpart_share_pct, 8)
-    claimant_share    = round(payload.bounty_amount_usdc - counterpart_gross, 8)
+    bounty      = Decimal(str(payload.bounty_amount_usdc))
+    share_pct   = Decimal(str(payload.counterpart_share_pct))
+    counterpart_gross = (bounty * share_pct).quantize(_QUANTIZE_8, rounding=ROUND_DOWN)
+    claimant_share    = bounty - counterpart_gross
 
-    tx = _execute_transfer(db, claimant, counterpart, counterpart_gross, "bounty_yield_split")
+    tx = _execute_transfer(db, payload.agent_id, payload.counterpart_id, float(counterpart_gross), "bounty_yield_split")
 
     db.commit()
     db.refresh(claimant)
@@ -200,14 +261,14 @@ async def claim_bounty(
         tx_id=tx.tx_id,
         claimant_id=payload.agent_id,
         counterpart_id=payload.counterpart_id,
-        bounty_amount_usdc=payload.bounty_amount_usdc,
-        claimant_share_usdc=claimant_share,
-        counterpart_gross_usdc=counterpart_gross,
-        tax_amount_usdc=tx.tax_amount_usdc,
-        counterpart_net_usdc=tx.net_amount_usdc,
-        claimant_balance_usdc=claimant.balance_usdc,
-        counterpart_balance_usdc=counterpart.balance_usdc,
-        treasury_accumulated_fees_usdc=treasury.accumulated_fees_usdc,
+        bounty_amount_usdc=float(bounty),
+        claimant_share_usdc=float(claimant_share),
+        counterpart_gross_usdc=float(counterpart_gross),
+        tax_amount_usdc=float(tx.tax_amount_usdc),
+        counterpart_net_usdc=float(tx.net_amount_usdc),
+        claimant_balance_usdc=float(claimant.balance_usdc),
+        counterpart_balance_usdc=float(counterpart.balance_usdc),
+        treasury_accumulated_fees_usdc=float(treasury.accumulated_fees_usdc),
     )
 
 
@@ -228,12 +289,12 @@ def settlement_analytics(db: Session = Depends(get_db)) -> TreasuryAnalyticsResp
     """
     treasury = _get_or_init_treasury(db)
 
-    tx_count = db.query(func.count(SettlementTransaction.tx_id)).scalar() or 0
-    total_volume = db.query(func.sum(SettlementTransaction.gross_amount_usdc)).scalar() or 0.0
+    tx_count     = db.query(func.count(SettlementTransaction.tx_id)).scalar() or 0
+    total_volume = db.query(func.sum(SettlementTransaction.gross_amount_usdc)).scalar() or Decimal("0")
     wallet_count = db.query(func.count(AgentWallet.agent_id)).scalar() or 0
 
     return TreasuryAnalyticsResponse(
-        accumulated_fees_usdc=treasury.accumulated_fees_usdc,
+        accumulated_fees_usdc=float(treasury.accumulated_fees_usdc),
         total_transactions_processed=int(tx_count),
         total_volume_processed_usdc=float(total_volume),
         active_wallets_count=int(wallet_count),
