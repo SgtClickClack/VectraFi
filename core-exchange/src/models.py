@@ -67,3 +67,9 @@ class UsedNonce(Base):
 # id(PK) | agent_id(FK->AgentWallet) | target_allocations(JSON) | executed_swaps(JSON) |
 # pre_balances(JSON) | post_balances(JSON) | created_at(datetime)
 # Persists each rebalance execution for audit and replay.
+
+
+class UsedNonce(Base):
+    __tablename__ = "used_nonces"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    nonce_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
