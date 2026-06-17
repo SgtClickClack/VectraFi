@@ -1,0 +1,87 @@
+# Welcome to VectraFi — An Agent-Native Ecosystem
+
+VectraFi is purpose-built for autonomous contributors. Every API endpoint, routing engine, and CI pipeline is designed to be discovered, extended, and governed by agent swarms without human-in-the-loop bottlenecks.
+
+---
+
+## Codebase Navigation Guide
+
+| Path | Purpose |
+|---|---|
+| `core-exchange/src/main.py` | FastAPI application entry point — routers, middleware, startup hooks |
+| `core-exchange/src/routes/` | Independent routing engines: `auth`, `market`, `trade`, `bank`, `wallet` |
+| `core-exchange/src/services/` | Pricing service (Coinbase API + fallback) and Web3 RPC provider |
+| `core-exchange/src/config.py` | Environment config: `RPC_PROVIDER_URL`, fallback prices, fee rates |
+| `core-exchange/src/schemas.py` | All Pydantic request/response models |
+| `core-exchange/src/models.py` | SQLAlchemy ORM: `AgentWallet`, `TreasuryState` |
+| `openclaw-skills/exchange-bank-gateway/SKILL.md` | OpenClaw skill manifest — tool definitions for agent runtimes |
+| `CLAUDE.md` | Permanent directive memory for all development agents |
+| `.github/workflows/agent-ci.yml` | Agentic governance loop — triggers on issues, PRs, and `@claude` mentions |
+
+Start the exchange locally:
+
+```bash
+cd core-exchange/src
+python run.py
+# API available at http://127.0.0.1:8000
+# Docs at http://127.0.0.1:8000/docs
+```
+
+---
+
+## Contribution Protocols
+
+### 1. Clone and set up
+
+```bash
+git clone https://github.com/SgtClickClack/VectraFi.git
+cd VectraFi
+python -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+pip install pytest httpx
+```
+
+### 2. Run the test suite
+
+```bash
+cd core-exchange/src
+pytest ../../tests/ -v
+```
+
+All PRs must pass the full test suite before merge. Any modification to core transaction logic in `routes/trade.py` or `routes/bank.py` requires new or updated unit test coverage.
+
+### 3. Code formatting
+
+- Follow PEP 8. Use `black` for formatting and `ruff` for linting before committing.
+- All API inputs and outputs must use strict Pydantic schemas defined in `schemas.py`.
+- Never store or log an agent private key anywhere in the codebase.
+
+### 4. Branch strategy
+
+- Branch from `main` using the pattern `feat/<short-description>` or `fix/<short-description>`.
+- Open PRs against `main`. The `@claude` governance agent will automatically review and comment.
+
+---
+
+## Automation Signal Flags
+
+The following GitHub Issue labels are open signals for autonomous PR submission:
+
+| Label | Meaning |
+|---|---|
+| `agent-build` | Feature or fix scoped and ready for autonomous implementation. Agent may clone, build, test, and open a PR without human pre-approval. |
+| `agent-bounty` | Higher-priority task with explicit acceptance criteria. Agent should implement, write tests, and request human review before merge. |
+
+**How to claim a task:**
+
+1. Find an open issue tagged `agent-build` or `agent-bounty`.
+2. Comment `@claude` to activate the Lead Maintenance Agent, or fork and open a PR directly.
+3. The CI governance loop (`agent-ci.yml`) will run automated security scanning and code review on your PR.
+4. A passing run with no critical findings triggers merge eligibility.
+
+**Guardrails:**
+
+- Never self-escalate permissions or create additional wallets beyond task scope.
+- Stop on any `400`, `401`, `404`, or `409` API response and surface the error in your PR description.
+- All vault deposit logic must preserve the 0.25% protocol fee. Fee evasion will cause automated CI rejection.
