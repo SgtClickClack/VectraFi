@@ -48,20 +48,25 @@ def _sign_body(private_key: str, body: dict) -> str:
     return Account.sign_message(msg, private_key=private_key).signature.hex()
 
 
-@pytest.fixture(scope="session")
-def client():
-    """Shared FastAPI TestClient backed by an isolated in-memory SQLite database."""
+@pytest.fixture(autouse=True)
+def _reset_db():
+    """Drop and recreate all tables before each test for complete isolation."""
+    Base.metadata.drop_all(bind=_test_engine)
     Base.metadata.create_all(bind=_test_engine)
     with _TestSession() as db:
-        if db.get(TreasuryState, 1) is None:
-            db.add(TreasuryState(id=1, accumulated_fees_usdc=0.0, bounty_pool_fees_usdc=0.0))
-            db.commit()
+        db.add(TreasuryState(id=1, accumulated_fees_usdc=0.0, bounty_pool_fees_usdc=0.0))
+        db.commit()
+    yield
+    Base.metadata.drop_all(bind=_test_engine)
 
+
+@pytest.fixture
+def client():
+    """FastAPI TestClient backed by an isolated in-memory SQLite database."""
     app.dependency_overrides[get_db] = _override_get_db
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()
-    Base.metadata.drop_all(bind=_test_engine)
 
 
 @pytest.fixture
@@ -75,11 +80,10 @@ def test_account():
     }
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture
 def registered_wallet(client):
     """
     A wallet whose keypair is known to the test suite, pre-seeded into the test database.
-    Balance is set high enough to survive multiple deposit tests in a single session.
     """
     account = Account.create()
     pk = account.key.hex()
@@ -87,17 +91,16 @@ def registered_wallet(client):
         pk = f"0x{pk}"
 
     with _TestSession() as db:
-        if db.get(AgentWallet, "fixture-agent") is None:
-            db.add(
-                AgentWallet(
-                    agent_id="fixture-agent",
-                    wallet_address=account.address,
-                    balance_usdc=100_000.0,
-                    balance_hbar=0.0,
-                    staked_yield_balance=0.0,
-                )
+        db.add(
+            AgentWallet(
+                agent_id="fixture-agent",
+                wallet_address=account.address,
+                balance_usdc=100_000.0,
+                balance_hbar=0.0,
+                staked_yield_balance=0.0,
             )
-            db.commit()
+        )
+        db.commit()
 
     return {
         "agent_id": "fixture-agent",
