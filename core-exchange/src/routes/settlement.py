@@ -5,6 +5,8 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
+from sqlalchemy import func
+
 from database import get_db
 from models import AgentWallet, SettlementTransaction, TreasuryState
 from routes.auth import verify_signed_payload
@@ -13,6 +15,7 @@ from schemas import (
     BountyClaimResponse,
     SettlementTransferRequest,
     SettlementTransferResponse,
+    TreasuryAnalyticsResponse,
 )
 
 logger = logging.getLogger("vectrafi.settlement")
@@ -205,4 +208,33 @@ async def claim_bounty(
         claimant_balance_usdc=claimant.balance_usdc,
         counterpart_balance_usdc=counterpart.balance_usdc,
         treasury_accumulated_fees_usdc=treasury.accumulated_fees_usdc,
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/settlement/analytics
+# ---------------------------------------------------------------------------
+
+@router.get("/analytics", response_model=TreasuryAnalyticsResponse)
+def settlement_analytics(db: Session = Depends(get_db)) -> TreasuryAnalyticsResponse:
+    """
+    Public read-only endpoint: returns aggregate settlement statistics.
+
+    No auth required. Queries:
+    - treasury.accumulated_fees_usdc (1.5% micro-tax accumulator)
+    - COUNT(*) of all settlement_transactions rows
+    - SUM(gross_amount_usdc) across all settlement_transactions
+    - COUNT(*) of registered agent_wallets
+    """
+    treasury = _get_or_init_treasury(db)
+
+    tx_count = db.query(func.count(SettlementTransaction.tx_id)).scalar() or 0
+    total_volume = db.query(func.sum(SettlementTransaction.gross_amount_usdc)).scalar() or 0.0
+    wallet_count = db.query(func.count(AgentWallet.agent_id)).scalar() or 0
+
+    return TreasuryAnalyticsResponse(
+        accumulated_fees_usdc=treasury.accumulated_fees_usdc,
+        total_transactions_processed=int(tx_count),
+        total_volume_processed_usdc=float(total_volume),
+        active_wallets_count=int(wallet_count),
     )

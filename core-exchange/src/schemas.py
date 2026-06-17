@@ -166,5 +166,12 @@ class BountyClaimResponse(BaseModel):
     treasury_accumulated_fees_usdc: float
 
 
+class TreasuryAnalyticsResponse(BaseModel):
+    accumulated_fees_usdc: float
+    total_transactions_processed: int
+    total_volume_processed_usdc: float
+    active_wallets_count: int
+
+
 class ErrorResponse(BaseModel):
     detail: str

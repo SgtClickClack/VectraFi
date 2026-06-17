@@ -66,9 +66,6 @@ def _override_db():
         db.close()
 
 
-app.dependency_overrides[get_db] = _override_db
-
-
 @pytest.fixture(scope="module", autouse=True)
 def setup_exchange_db():
     Base.metadata.create_all(bind=_engine)
@@ -77,7 +74,13 @@ def setup_exchange_db():
         db.add(TreasuryState(id=1, accumulated_fees_usdc=0.0, bounty_pool_fees_usdc=0.0))
         db.commit()
     db.close()
+    _prev = app.dependency_overrides.get(get_db)
+    app.dependency_overrides[get_db] = _override_db
     yield
+    if _prev is not None:
+        app.dependency_overrides[get_db] = _prev
+    else:
+        app.dependency_overrides.pop(get_db, None)
     Base.metadata.drop_all(bind=_engine)
 
 
@@ -315,3 +318,132 @@ def test_tax_preview_matches_settlement(mcp, exchange_client):
     assert preview["gross_usdc"] == pytest.approx(rd["gross_amount_usdc"])
     assert preview["tax_usdc"]   == pytest.approx(rd["tax_amount_usdc"],  rel=1e-6)
     assert preview["net_usdc"]   == pytest.approx(rd["net_amount_usdc"],  rel=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# 11. GET /api/v1/settlement/analytics — baseline structure (no auth required)
+# ---------------------------------------------------------------------------
+
+def test_analytics_endpoint_structure(exchange_client):
+    resp = exchange_client.get("/api/v1/settlement/analytics")
+    assert resp.status_code == 200
+    d = resp.json()
+    assert "accumulated_fees_usdc" in d
+    assert "total_transactions_processed" in d
+    assert "total_volume_processed_usdc" in d
+    assert "active_wallets_count" in d
+    assert isinstance(d["total_transactions_processed"], int)
+    assert isinstance(d["active_wallets_count"], int)
+    assert d["accumulated_fees_usdc"] >= 0.0
+    assert d["total_volume_processed_usdc"] >= 0.0
+
+
+# ---------------------------------------------------------------------------
+# 12. Sequential transfers increment analytics counters correctly
+# ---------------------------------------------------------------------------
+
+def test_analytics_accumulates_across_transfers(mcp, exchange_client):
+    acct_s = _make_agent("ana-sender", 1000.0)
+    _make_agent("ana-recv", 0.0)
+
+    before = exchange_client.get("/api/v1/settlement/analytics").json()
+
+    # Execute 3 sequential transfers of 50 USDC each
+    for _ in range(3):
+        raw  = mcp.build_transfer_payload("ana-sender", acct_s.address, "ana-recv", 50.0)
+        d    = json.loads(raw)
+        sig  = _sign(acct_s, d["body"])
+        r    = exchange_client.post(
+            "/api/v1/settlement/transfer",
+            content=d["body_compact"],
+            headers={"Content-Type": "application/json", "X-VectraFi-Signature": sig},
+        )
+        assert r.status_code == 200, r.text
+
+    after = exchange_client.get("/api/v1/settlement/analytics").json()
+
+    assert after["total_transactions_processed"] == before["total_transactions_processed"] + 3
+    assert after["total_volume_processed_usdc"]  == pytest.approx(
+        before["total_volume_processed_usdc"] + 150.0, rel=1e-6
+    )
+    # 3 × 50 × 0.015 = 2.25
+    expected_fee_delta = 3 * 50.0 * 0.015
+    assert after["accumulated_fees_usdc"] == pytest.approx(
+        before["accumulated_fees_usdc"] + expected_fee_delta, rel=1e-6
+    )
+
+
+# ---------------------------------------------------------------------------
+# 13. active_wallets_count reflects registered agents
+# ---------------------------------------------------------------------------
+
+def test_analytics_wallet_count(exchange_client):
+    before = exchange_client.get("/api/v1/settlement/analytics").json()
+    count_before = before["active_wallets_count"]
+
+    # Register a new wallet
+    _make_agent("ana-wallet-probe", 0.0)
+
+    after = exchange_client.get("/api/v1/settlement/analytics").json()
+    assert after["active_wallets_count"] == count_before + 1
+
+
+# ---------------------------------------------------------------------------
+# 14. get_treasury_telemetry MCP tool calls analytics and returns correct keys
+# ---------------------------------------------------------------------------
+
+def test_get_treasury_telemetry_tool_structure(mcp, exchange_client, monkeypatch):
+    import httpx as _httpx
+
+    # Route MCP httpx calls through the TestClient (avoids needing a live server)
+    class _MockClient:
+        def __init__(self, *a, **kw):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            pass
+        def get(self, url, **kw):
+            path = url.replace("http://127.0.0.1:8000", "")
+
+            class _Resp:
+                status_code = 200
+                def raise_for_status(self): pass
+                def json(self_):
+                    return exchange_client.get(path).json()
+            return _Resp()
+
+    monkeypatch.setattr(_httpx, "Client", _MockClient)
+
+    raw = mcp.get_treasury_telemetry()
+    d   = json.loads(raw)
+    assert d["status"] == "live"
+    assert "accumulated_fees_usdc" in d
+    assert "total_transactions_processed" in d
+    assert "total_volume_processed_usdc" in d
+    assert "active_wallets_count" in d
+
+
+# ---------------------------------------------------------------------------
+# 15. get_treasury_telemetry returns structured error when exchange is offline
+# ---------------------------------------------------------------------------
+
+def test_get_treasury_telemetry_offline_error(mcp, monkeypatch):
+    import httpx as _httpx
+
+    class _OfflineClient:
+        def __init__(self, *a, **kw):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            pass
+        def get(self, url, **kw):
+            raise _httpx.ConnectError("refused")
+
+    monkeypatch.setattr(_httpx, "Client", _OfflineClient)
+
+    raw = mcp.get_treasury_telemetry()
+    d   = json.loads(raw)
+    assert d["status"] == "exchange_offline"
+    assert "message" in d

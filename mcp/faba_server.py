@@ -506,5 +506,42 @@ def get_agent_balance(
         return json.dumps({"status": "error", "detail": str(exc)}, indent=2)
 
 
+@mcp.tool()
+def get_treasury_telemetry() -> str:
+    """
+    Returns live treasury analytics from the core-exchange settlement engine.
+
+    Hits GET /api/v1/settlement/analytics on the local exchange server and returns
+    the structured metric block:
+    - accumulated_fees_usdc: total 1.5% micro-tax collected from all peer transfers.
+    - total_transactions_processed: count of all settlement_transactions rows.
+    - total_volume_processed_usdc: sum of gross_amount_usdc across all transactions.
+    - active_wallets_count: number of registered agent wallets.
+
+    Requires the exchange server to be running locally (cd core-exchange/src && python run.py).
+    Returns a structured error if the server is unreachable.
+    """
+    try:
+        with httpx.Client(timeout=httpx.Timeout(connect=3.0, read=5.0, write=3.0, pool=3.0)) as client:
+            resp = client.get(f"{_API_BASE}/api/v1/settlement/analytics")
+            resp.raise_for_status()
+            data = resp.json()
+            return json.dumps({
+                "status": "live",
+                "source": f"{_API_BASE}/api/v1/settlement/analytics",
+                **data,
+            }, indent=2)
+    except httpx.ConnectError:
+        return json.dumps({
+            "status": "exchange_offline",
+            "message": (
+                "Cannot reach exchange server at http://127.0.0.1:8000. "
+                "Start it with: cd core-exchange/src && python run.py"
+            ),
+        }, indent=2)
+    except Exception as exc:
+        return json.dumps({"status": "error", "detail": str(exc)}, indent=2)
+
+
 if __name__ == "__main__":
     mcp.run()
