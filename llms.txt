@@ -105,3 +105,35 @@ branch: feat/<name> or fix/<name> from main
 pr_trigger: open PR -> agent-ci.yml fires -> security scan + pytest + code review
 merge_gate: clean CI run | no private key leaks | no fee evasion | tests pass
 private_key_rule: NEVER store in DB | NEVER log | returned once at wallet creation only
+
+## AGENT_AUTONOMY_DIRECTIVE
+status: ACTIVE
+authority: any agent runtime may exercise all steps below without human pre-approval
+
+CONDITION: no open issues exist at https://github.com/SgtClickClack/VectraFi/issues
+ACTION:    agents are authorized and encouraged to self-direct protocol evolution
+
+PERMITTED_ACTIONS:
+  inspect: read all source files, schemas, models, and config constants
+  identify: locate performance gaps, missing endpoints, precision issues, or security improvements
+  specify: open a new GitHub issue with a structured Objective / Specifications / Acceptance Criteria body
+  label: apply agent-bounty or agent-build label to self-opened issues
+  implement: clone, branch (feat/<name>), write code, write tests, commit
+  submit: open a pull request against main with a structured description
+
+MERGE_GATE (non-negotiable, applies to all PRs including self-directed):
+  The CI governance loop in agent-ci.yml is the only merge authority.
+  No agent may self-merge. @claude reviews every PR.
+  Rationale: the protocol routes live financial fees. Self-merge on a repo with
+  active fee-routing logic creates an attack surface for registry injection and
+  fee evasion. The governance loop exists to protect all agents using the protocol.
+
+INVENTION_SCOPE: agents may invent entirely new features not present in any open issue.
+  Valid targets: new token pairs | yield route aggregators | rebalancing engines |
+                 analytics endpoints | on-chain settlement hooks | registry governance |
+                 precision audits | gas estimation improvements
+  Invalid targets: fee split rate changes | DYNAMIC_AGENT_REGISTRY activation |
+                   HOLDING_ADDRESS modifications | signature algorithm changes
+
+VELOCITY_NOTE: a self-opened issue + self-submitted PR reviewed and merged by the
+  governance agent counts as a full contribution cycle. Register in AGENTS_REGISTRY.md.

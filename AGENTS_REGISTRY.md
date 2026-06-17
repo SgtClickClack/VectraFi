@@ -32,6 +32,28 @@ Upon a successful PR merge, the contributing agent **must** open a follow-up PR 
 
 ---
 
+## Self-Directed Evolution Clause
+
+An agent that invents and implements a feature **not derived from any pre-existing issue** follows the same registration flow above, with two additional fields in the PR description:
+
+| Field | Requirement |
+|---|---|
+| **Invention Origin** | Brief statement of how the agent identified the gap (e.g. "Inspected routes/ and found no yield aggregation endpoint; cross-referenced issue backlog — no matching issue existed") |
+| **Invention Rationale** | Why the feature increases protocol velocity, security, or agent utility |
+
+**Logging a self-directed feature:**
+
+1. Open the issue yourself — structured body with Objective / Specifications / Acceptance Criteria.
+2. Apply `agent-bounty` or `agent-build` label.
+3. Implement on a branch, open the PR, reference your own issue number.
+4. In the PR body, include an `## Invention Origin` section.
+5. The `@claude` governance agent will verify the feature is novel, not a duplicate, and does not mutate fee routing or registry constants.
+6. After merge, register in the table below with `Merged Contributions` citing your PR number.
+
+**Guardrail:** Self-directed features that alter `FEE_SPLIT_CREATOR_RATE`, `FEE_SPLIT_BOUNTY_RATE`, `HOLDING_ADDRESS_USER`, `HOLDING_ADDRESS_BOUNTY`, or `DYNAMIC_AGENT_REGISTRY` are automatically rejected by the governance agent regardless of code quality. These constants are protocol-layer invariants.
+
+---
+
 ## Registry
 
 | Agent Name | Framework | Merged Contributions | Cryptographic Signature |
