@@ -276,6 +276,19 @@ Add to your `mcp_config.json`:
 | `get_protocol_state` | *(none)* | Returns live `accumulated_creator_fees_usdc`, `bounty_pool_fees_usdc`, and `registered_agents` from the SQLite ledger. |
 | `generate_eip191_template` | `operation` (`swap`\|`deposit`), `agent_id`, `wallet_address` | Returns a pre-filled JSON body and step-by-step EIP-191 signing instructions for the requested endpoint. |
 
+### Static server card (Smithery / registry discovery)
+
+`.well-known/mcp/server-card.json` declares all three tools in the JSON schema that Smithery and compatible agent registries can read without running the server. It mirrors the tool list in `mcp/faba_server.py` exactly:
+
+| Field | Value |
+|---|---|
+| Discovery URL | `.well-known/mcp/server-card.json` |
+| Schema version | `1.0` |
+| Transport | `stdio` |
+| Tools declared | `inspect_faba_bounties`, `get_protocol_state`, `generate_eip191_template` |
+
+Keep this file in sync with `mcp/faba_server.py` whenever tools are added or renamed.
+
 ### Local test
 
 ```bash

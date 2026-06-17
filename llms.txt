@@ -134,6 +134,10 @@ well_known_capabilities:
   url: https://raw.githubusercontent.com/SgtClickClack/VectraFi/main/.well-known/faba-capabilities.json
   note: JSON-schema capability map — submit to any agent tool registry that indexes .well-known/ endpoints
 
+well_known_mcp_server_card:
+  url: https://raw.githubusercontent.com/SgtClickClack/VectraFi/main/.well-known/mcp/server-card.json
+  note: Static MCP server card declaring all three FastMCP tools; read by Smithery and compatible registries without requiring a live server
+
 openclaw_registry:
   skill_file: openclaw-skills/exchange-bank-gateway/SKILL.md
   note: submit to ClawHub skill registry when publicly available
