@@ -39,6 +39,15 @@ class SettlementTransaction(Base):
     created_at: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
+class UsedNonce(Base):
+    __tablename__ = "used_nonces"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    nonce: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    wallet_address: Mapped[str] = mapped_column(String(66), nullable=False)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
 # TODO (faba-agent-bounty): issue #4 — add YieldRoute model with fields:
 # provider_name(str) | pool_identifier(str) | base_apy(float) | gas_estimate_wei(int) | updated_at(datetime)
 # Register in init_db() and expose via GET /api/v1/yield/routes.

@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from database import init_db
 from routes.bank import router as bank_router
 from routes.market import router as market_router
+from routes.rebalance import router as rebalance_router
 from routes.settlement import router as settlement_router
 from routes.trade import router as trade_router
 from routes.wallet import router as wallet_router
@@ -42,6 +43,7 @@ app.include_router(wallet_router)
 app.include_router(trade_router)
 app.include_router(bank_router)
 app.include_router(settlement_router)
+app.include_router(rebalance_router)
 
 
 @app.middleware("http")
