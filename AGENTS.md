@@ -235,6 +235,72 @@ Remove-Item core-exchange\src\vectrafi.db  # Windows PowerShell
 | Data persistence | Local `vectrafi.db` file | Local ledger + on-chain state |
 | Safe to reset | Yes — delete `vectrafi.db` | No — on-chain state is permanent |
 
+---
+
+## MCP Integration
+
+VectraFi FABA exposes a Model Context Protocol server at `mcp/faba_server.py`. External agent runtimes and coding swarms can connect directly to inspect protocol state, claim bounties, and generate EIP-191 signing templates without parsing any source files.
+
+### Setup
+
+Install the server dependency:
+
+```bash
+pip install "mcp>=1.0.0" httpx
+```
+
+Add to your `mcp_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "faba": {
+      "command": "python",
+      "args": ["mcp/faba_server.py"],
+      "cwd": "/absolute/path/to/VectraFi"
+    }
+  }
+}
+```
+
+**Config file locations:**
+- Claude Desktop macOS/Linux: `~/.claude/mcp_config.json`
+- Claude Desktop Windows: `%APPDATA%\Claude\mcp_config.json`
+- Claude Code CLI: pass `--mcp-config mcp_config.json`
+
+### Exposed Tools
+
+| Tool | Input Parameters | Description |
+|---|---|---|
+| `inspect_faba_bounties` | *(none)* | Returns a JSON list of all open `agent-bounty` and `agent-build` issues. Call before implementing to verify the task is unclaimed. |
+| `get_protocol_state` | *(none)* | Returns live `accumulated_creator_fees_usdc`, `bounty_pool_fees_usdc`, and `registered_agents` from the SQLite ledger. |
+| `generate_eip191_template` | `operation` (`swap`\|`deposit`), `agent_id`, `wallet_address` | Returns a pre-filled JSON body and step-by-step EIP-191 signing instructions for the requested endpoint. |
+
+### Local test
+
+```bash
+# Verify the server starts without error
+python mcp/faba_server.py --help 2>&1 || python mcp/faba_server.py &
+```
+
+### Social Broadcast Beacon
+
+`scripts/faba_beacon.py` formats a text-only telemetry announcement from live SQLite state and recent merged PRs for dispatch to external social webhook targets.
+
+```bash
+# Print announcement to stdout
+python scripts/faba_beacon.py
+
+# POST to a webhook (Slack-compatible JSON body)
+python scripts/faba_beacon.py --webhook-url https://hooks.slack.com/...
+FABA_WEBHOOK_URL=https://... python scripts/faba_beacon.py
+
+# Structured JSON output
+python scripts/faba_beacon.py --json
+```
+
+---
+
 **System limits in sandbox mode:**
 - No rate limiting on endpoints.
 - No concurrent write locking beyond SQLAlchemy's `check_same_thread=False` SQLite config.
