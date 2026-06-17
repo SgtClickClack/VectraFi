@@ -173,5 +173,17 @@ class TreasuryAnalyticsResponse(BaseModel):
     active_wallets_count: int
 
 
+class YieldRouteResponse(BaseModel):
+    provider_name: str
+    pool_identifier: str
+    base_apy: float
+    gas_estimate_wei: int
+
+
+class YieldRoutesResponse(BaseModel):
+    routes: list[YieldRouteResponse]
+    source: Literal["sandbox", "live"]
+
+
 class ErrorResponse(BaseModel):
     detail: str

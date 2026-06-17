@@ -11,6 +11,7 @@ from routes.market import router as market_router
 from routes.settlement import router as settlement_router
 from routes.trade import router as trade_router
 from routes.wallet import router as wallet_router
+from routes.yield_routes import router as yield_router
 from services.web3_provider import is_live_mode
 
 
@@ -42,6 +43,7 @@ app.include_router(wallet_router)
 app.include_router(trade_router)
 app.include_router(bank_router)
 app.include_router(settlement_router)
+app.include_router(yield_router)
 
 
 @app.middleware("http")
