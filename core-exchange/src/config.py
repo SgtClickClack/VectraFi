@@ -33,3 +33,9 @@ DEFAULT_USDC_BALANCE = 1000.0
 DEFAULT_HBAR_BALANCE = 0.0
 
 VAULT_ROUTING_ADDRESS = HOLDING_ADDRESS_USER
+
+# Governance hook: verified merged-PR contributor addresses appended here by
+# future on-chain governance. No fee routing is tied to this list until a
+# ratified distribution proposal activates it — mutating this in a PR will
+# have no financial effect and will be flagged by the CI security scan.
+DYNAMIC_AGENT_REGISTRY: list[str] = []

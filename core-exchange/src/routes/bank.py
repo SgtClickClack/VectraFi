@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from config import (
+    DYNAMIC_AGENT_REGISTRY,
     FEE_SPLIT_BOUNTY_RATE,
     FEE_SPLIT_CREATOR_RATE,
     HOLDING_ADDRESS_BOUNTY,
@@ -87,7 +88,7 @@ async def deposit_to_vault(request: Request, db: Session = Depends(get_db)) -> D
 
     logger.info(
         "Vault deposit mode=%s agent=%s gross=%.6f fee=%.6f "
-        "creator=%.6f->%s bounty=%.6f->%s net=%.6f",
+        "creator=%.6f->%s bounty=%.6f->%s net=%.6f registry_size=%d",
         execution_mode,
         payload.agent_id,
         payload.amount_usdc,
@@ -97,6 +98,7 @@ async def deposit_to_vault(request: Request, db: Session = Depends(get_db)) -> D
         bounty_fee,
         HOLDING_ADDRESS_BOUNTY,
         net_deposited,
+        len(DYNAMIC_AGENT_REGISTRY),
     )
 
     return DepositResponse(
