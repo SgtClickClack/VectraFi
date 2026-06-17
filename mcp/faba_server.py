@@ -20,6 +20,7 @@ Dependencies:
 """
 
 import json
+import os
 import re
 import sqlite3
 import subprocess
@@ -34,6 +35,8 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 _DB_PATH = _REPO_ROOT / "core-exchange" / "src" / "vectrafi.db"
 _GITHUB_REPO = "SgtClickClack/VectraFi"
 _API_BASE = "http://127.0.0.1:8000"
+_GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "").strip()
+_GH_TIMEOUT = 3.0  # hard ceiling: fall back to cache rather than hang
 
 _FALLBACK_ISSUES = [
     {"number": 3, "title": "feat: Implement Protocol Treasury Fee Collector on Deposits", "labels": ["agent-bounty"], "url": f"https://github.com/{_GITHUB_REPO}/issues/3"},
@@ -46,12 +49,14 @@ mcp = FastMCP("VectraFi FABA Protocol")
 
 
 def _gh_list_issues(label: str) -> list[dict]:
-    """Fetch open issues via the gh CLI (preferred — respects GITHUB_TOKEN)."""
+    """Use gh CLI only when GITHUB_TOKEN is set — skips entirely otherwise to avoid auth hangs."""
+    if not _GITHUB_TOKEN:
+        return []
     try:
         result = subprocess.run(
             ["gh", "issue", "list", "--repo", _GITHUB_REPO, "--label", label,
              "--state", "open", "--json", "number,title,url,labels"],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True, text=True, timeout=_GH_TIMEOUT,
         )
         if result.returncode == 0:
             return json.loads(result.stdout)
@@ -61,13 +66,19 @@ def _gh_list_issues(label: str) -> list[dict]:
 
 
 def _httpx_list_issues() -> list[dict]:
-    """Fetch open issues via httpx + GitHub REST API (unauthenticated, 60 req/hr)."""
+    """Fetch open issues via GitHub REST API with a 3-second hard timeout."""
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    if _GITHUB_TOKEN:
+        headers["Authorization"] = f"Bearer {_GITHUB_TOKEN}"
     try:
-        with httpx.Client(timeout=8.0) as client:
+        with httpx.Client(timeout=httpx.Timeout(connect=3.0, read=3.0, write=3.0, pool=3.0)) as client:
             resp = client.get(
                 f"https://api.github.com/repos/{_GITHUB_REPO}/issues",
                 params={"state": "open", "per_page": 50},
-                headers={"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"},
+                headers=headers,
             )
             resp.raise_for_status()
             target_labels = {"agent-bounty", "agent-build"}
@@ -100,7 +111,20 @@ def inspect_faba_bounties() -> str:
     - agent-bounty: high-priority, explicit acceptance criteria, human review before merge.
     - agent-build: scoped feature, autonomous PR submission without pre-approval.
     """
-    # Try gh CLI first (honours GITHUB_TOKEN, higher rate limit)
+    # No token → skip all network calls, return cache immediately (avoids 30s hang)
+    if not _GITHUB_TOKEN:
+        return json.dumps({
+            "source": "fallback_cache",
+            "warning": (
+                "GITHUB_TOKEN env var not set. Returning cached backlog. "
+                "Set GITHUB_TOKEN for live issue state."
+            ),
+            "open_issues": _FALLBACK_ISSUES,
+            "count": len(_FALLBACK_ISSUES),
+            "claim_url": f"https://github.com/{_GITHUB_REPO}/issues",
+        }, indent=2)
+
+    # Token present: try gh CLI first (3s timeout)
     bounties = _gh_list_issues("agent-bounty")
     builds = _gh_list_issues("agent-build")
     if bounties or builds:
@@ -112,7 +136,7 @@ def inspect_faba_bounties() -> str:
             "claim_url": f"https://github.com/{_GITHUB_REPO}/issues",
         }, indent=2)
 
-    # Fallback: unauthenticated GitHub REST API
+    # Fallback: GitHub REST API (3s timeout)
     issues = _httpx_list_issues()
     if issues:
         return json.dumps({
@@ -291,6 +315,52 @@ def generate_eip191_template(
         },
         "notes": notes,
     }, indent=2)
+
+
+@mcp.tool()
+def get_agent_balance(
+    agent_id: Annotated[str, "Agent identifier to look up (e.g. 'agent-zero', 'treasury')"],
+) -> str:
+    """
+    Returns the current sandbox ledger balance for an agent wallet.
+
+    Reads from workspace/bank.db — the sandboxed micro-bank ledger provisioned
+    during Phase 2. Balances are integer units (no floating-point).
+
+    This tool is READ-ONLY. Mutating operations (transfers, settlements) require
+    X-VectraFi-Signature validation and are routed through core-exchange endpoints,
+    not exposed via MCP directly.
+    """
+    _SANDBOX_DB = _REPO_ROOT / "workspace" / "bank.db"
+    if not _SANDBOX_DB.exists():
+        return json.dumps({
+            "status": "db_not_initialised",
+            "message": (
+                "workspace/bank.db not found. Run: "
+                "python -c \"import sys; sys.path.insert(0, 'workspace'); "
+                "from bank_ledger import init_db; init_db()\""
+            ),
+        }, indent=2)
+
+    try:
+        conn = sqlite3.connect(str(_SANDBOX_DB))
+        row = conn.execute(
+            "SELECT agent_id, identifier, balance FROM wallets WHERE agent_id = ?",
+            (agent_id,),
+        ).fetchone()
+        conn.close()
+        if row is None:
+            return json.dumps({"status": "not_found", "agent_id": agent_id}, indent=2)
+        return json.dumps({
+            "status": "ok",
+            "agent_id": row[0],
+            "identifier": row[1],
+            "balance": row[2],
+            "unit": "integer_ledger_units",
+            "note": "Sandbox simulation only — not on-chain.",
+        }, indent=2)
+    except Exception as exc:
+        return json.dumps({"status": "error", "detail": str(exc)}, indent=2)
 
 
 if __name__ == "__main__":

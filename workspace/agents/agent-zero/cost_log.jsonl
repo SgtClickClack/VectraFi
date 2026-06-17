@@ -22,3 +22,21 @@
 {"ts": "2026-06-17T08:54:00.462995+00:00", "event": "tick", "tokens": 0, "elapsed_ms": 1453.0}
 {"ts": "2026-06-17T08:54:01.463605+00:00", "event": "tick", "tokens": 0, "elapsed_ms": 0.0}
 {"ts": "2026-06-17T08:54:01.463605+00:00", "event": "loop_stop", "tokens": 0, "elapsed_ms": 0.0}
+{"ts": "2026-06-17T08:59:14+00:00", "event": "step2_pool_arrangement", "elapsed_ms": 0.0, "bounty_yield": 500, "agent_zero_weight": 0.6, "agent_one_weight": 0.4, "agent_zero_share": 300, "agent_one_share": 200}
+{"ts": "2026-06-17T08:59:14+00:00", "event": "step2_pool_arrangement", "elapsed_ms": 0.0, "bounty_yield": 300, "agent_zero_weight": 0.75, "agent_one_weight": 0.25, "agent_zero_share": 225, "agent_one_share": 75}
+{"ts": "2026-06-17T08:59:14+00:00", "event": "step2_pool_arrangement", "elapsed_ms": 0.0, "bounty_yield": 1000, "agent_zero_weight": 0.6, "agent_one_weight": 0.4, "agent_zero_share": 600, "agent_one_share": 400}
+{"ts": "2026-06-17T09:01:04+00:00", "event": "step1_inspect_bounties", "elapsed_ms": 0.0, "agent": "agent-zero", "balance": 10000, "bounties_seen": 3, "selected_bounty": "bounty-002", "selected_yield": 600}
+{"ts": "2026-06-17T09:01:04+00:00", "event": "step1_inspect_bounties", "elapsed_ms": 0.0, "agent": "agent-zero", "balance": 10000, "bounties_seen": 3, "selected_bounty": "bounty-002", "selected_yield": 600}
+{"ts": "2026-06-17T09:01:04+00:00", "event": "step2_pool_arrangement", "elapsed_ms": 0.0, "bounty_yield": 500, "agent_zero_weight": 0.6, "agent_one_weight": 0.4, "agent_zero_share": 300, "agent_one_share": 200}
+{"ts": "2026-06-17T09:01:04+00:00", "event": "step2_pool_arrangement", "elapsed_ms": 0.0, "bounty_yield": 300, "agent_zero_weight": 0.75, "agent_one_weight": 0.25, "agent_zero_share": 225, "agent_one_share": 75}
+{"ts": "2026-06-17T09:01:04+00:00", "event": "step2_pool_arrangement", "elapsed_ms": 0.0, "bounty_yield": 1000, "agent_zero_weight": 0.6, "agent_one_weight": 0.4, "agent_zero_share": 600, "agent_one_share": 400}
+{"ts": "2026-06-17T09:02:24+00:00", "event": "step1_inspect_bounties", "elapsed_ms": 0.0, "agent": "agent-zero", "balance": 10000, "bounties_seen": 3, "selected_bounty": "bounty-002", "selected_yield": 600}
+{"ts": "2026-06-17T09:02:24+00:00", "event": "step1_inspect_bounties", "elapsed_ms": 0.0, "agent": "agent-zero", "balance": 10000, "bounties_seen": 3, "selected_bounty": "bounty-002", "selected_yield": 600}
+{"ts": "2026-06-17T09:02:24+00:00", "event": "step2_pool_arrangement", "elapsed_ms": 0.0, "bounty_yield": 500, "agent_zero_weight": 0.6, "agent_one_weight": 0.4, "agent_zero_share": 300, "agent_one_share": 200}
+{"ts": "2026-06-17T09:02:24+00:00", "event": "step2_pool_arrangement", "elapsed_ms": 0.0, "bounty_yield": 300, "agent_zero_weight": 0.75, "agent_one_weight": 0.25, "agent_zero_share": 225, "agent_one_share": 75}
+{"ts": "2026-06-17T09:02:24+00:00", "event": "step2_pool_arrangement", "elapsed_ms": 0.0, "bounty_yield": 1000, "agent_zero_weight": 0.6, "agent_one_weight": 0.4, "agent_zero_share": 600, "agent_one_share": 400}
+{"ts": "2026-06-17T09:02:52+00:00", "event": "swarm_start", "elapsed_ms": 0.0, "initial_balances": {"agent-one": 10000, "agent-zero": 10000, "treasury": 0}}
+{"ts": "2026-06-17T09:02:52+00:00", "event": "step1_inspect_bounties", "elapsed_ms": 0.0, "agent": "agent-zero", "balance": 10000, "bounties_seen": 3, "selected_bounty": "bounty-002", "selected_yield": 600}
+{"ts": "2026-06-17T09:02:52+00:00", "event": "step2_pool_arrangement", "elapsed_ms": 0.0, "bounty_yield": 600, "agent_zero_weight": 0.6, "agent_one_weight": 0.4, "agent_zero_share": 360, "agent_one_share": 240}
+{"ts": "2026-06-17T09:02:52+00:00", "event": "step3_settlement", "elapsed_ms": 0.0, "claimant": "agent-zero", "counterpart": "agent-one", "bounty_amount": 600, "claimant_share": 400, "counterpart_share": 200, "tax_collected": 3, "post_balances": {"agent-zero": 9800, "agent-one": 10197, "treasury": 3}}
+{"ts": "2026-06-17T09:02:52+00:00", "event": "swarm_complete", "elapsed_ms": 0.0, "final_balances": {"agent-one": 10197, "agent-zero": 9800, "treasury": 3}, "cumulative_tax_to_treasury": 3}
