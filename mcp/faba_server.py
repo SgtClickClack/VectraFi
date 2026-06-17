@@ -318,6 +318,149 @@ def generate_eip191_template(
 
 
 @mcp.tool()
+def build_transfer_payload(
+    agent_id: Annotated[str, "Sender agent_id — must be registered via POST /api/v1/wallet/create"],
+    wallet_address: Annotated[str, "Sender's 42-char Ethereum address (0x + 40 hex chars)"],
+    receiver_id: Annotated[str, "Receiver agent_id — must be a registered agent"],
+    amount_usdc: Annotated[float, "Gross transfer amount in USDC (float > 0)"],
+    tx_type: Annotated[str, "Transfer label, e.g. 'peer_transfer' or 'bounty_yield_split'"] = "peer_transfer",
+) -> str:
+    """
+    Builds the exact JSON body for POST /api/v1/settlement/transfer.
+
+    Returns a payload dict whose key order matches the Pydantic schema exactly.
+    Sign this with EIP-191 using compact JSON (no spaces) — the signature must
+    be byte-for-byte identical to what you POST.
+
+    Signing and submission (Python):
+        import json
+        from eth_account import Account
+        from eth_account.messages import encode_defunct
+
+        result  = json.loads(build_transfer_payload(...))
+        body    = result["body"]
+        body_text = json.dumps(body, separators=(',', ':'))   # compact, no spaces
+        msg     = encode_defunct(text=body_text)
+        sig     = Account.sign_message(msg, private_key=YOUR_PRIVATE_KEY)
+        # POST body (as JSON) with header X-VectraFi-Signature: sig.signature.hex()
+
+    Tax model: 1.5% of amount_usdc is deducted and routed to treasury.
+               receiver receives amount_usdc * 0.985 net.
+    """
+    if not re.fullmatch(r"0x[0-9a-fA-F]{40}", wallet_address):
+        return json.dumps({"error": "Invalid wallet_address — must be 0x + 40 hex chars"}, indent=2)
+    if amount_usdc <= 0:
+        return json.dumps({"error": "amount_usdc must be > 0"}, indent=2)
+    if agent_id == receiver_id:
+        return json.dumps({"error": "agent_id and receiver_id must differ"}, indent=2)
+
+    # Key order matches SettlementTransferRequest field declaration order in schemas.py
+    body = {
+        "agent_id":       agent_id,
+        "wallet_address": wallet_address,
+        "receiver_id":    receiver_id,
+        "amount_usdc":    amount_usdc,
+        "tx_type":        tx_type,
+    }
+    tax_preview  = round(amount_usdc * 0.015, 8)
+    net_preview  = round(amount_usdc - tax_preview, 8)
+    endpoint     = f"{_API_BASE}/api/v1/settlement/transfer"
+
+    return json.dumps({
+        "endpoint":    endpoint,
+        "method":      "POST",
+        "body":        body,
+        "body_compact": json.dumps(body, separators=(",", ":")),
+        "header_name": "X-VectraFi-Signature",
+        "tax_preview": {
+            "gross_usdc": amount_usdc,
+            "tax_usdc":   tax_preview,
+            "net_usdc":   net_preview,
+        },
+        "auth_errors": {
+            "401": "missing or invalid X-VectraFi-Signature",
+            "400": "insufficient balance or self-transfer",
+            "404": "agent_id or receiver_id not registered",
+            "422": "schema validation failure",
+        },
+    }, indent=2)
+
+
+@mcp.tool()
+def build_bounty_claim_payload(
+    agent_id: Annotated[str, "Claimant agent_id — must hold the gross bounty balance"],
+    wallet_address: Annotated[str, "Claimant's 42-char Ethereum address (0x + 40 hex chars)"],
+    counterpart_id: Annotated[str, "Peer agent_id receiving the yield split"],
+    bounty_amount_usdc: Annotated[float, "Gross bounty in USDC to be split (float > 0)"],
+    counterpart_share_pct: Annotated[float, "Fraction going to counterpart, exclusive (0 < x < 1). E.g. 0.333 for 1/3"],
+) -> str:
+    """
+    Builds the exact JSON body for POST /api/v1/settlement/claim-bounty.
+
+    The claimant must already hold bounty_amount_usdc in their wallet.
+    This endpoint transfers counterpart_share_pct * bounty_amount_usdc to the
+    counterpart (minus 1.5% micro-tax), and the claimant retains the rest.
+
+    Signing and submission (Python):
+        import json
+        from eth_account import Account
+        from eth_account.messages import encode_defunct
+
+        result  = json.loads(build_bounty_claim_payload(...))
+        body    = result["body"]
+        body_text = json.dumps(body, separators=(',', ':'))
+        msg     = encode_defunct(text=body_text)
+        sig     = Account.sign_message(msg, private_key=YOUR_PRIVATE_KEY)
+        # POST body (as JSON) with header X-VectraFi-Signature: sig.signature.hex()
+
+    Split preview is included in the response for verification before signing.
+    """
+    if not re.fullmatch(r"0x[0-9a-fA-F]{40}", wallet_address):
+        return json.dumps({"error": "Invalid wallet_address — must be 0x + 40 hex chars"}, indent=2)
+    if bounty_amount_usdc <= 0:
+        return json.dumps({"error": "bounty_amount_usdc must be > 0"}, indent=2)
+    if not (0 < counterpart_share_pct < 1):
+        return json.dumps({"error": "counterpart_share_pct must be in (0, 1) exclusive"}, indent=2)
+    if agent_id == counterpart_id:
+        return json.dumps({"error": "agent_id and counterpart_id must differ"}, indent=2)
+
+    # Key order matches BountyClaimRequest field declaration order in schemas.py
+    body = {
+        "agent_id":              agent_id,
+        "wallet_address":        wallet_address,
+        "counterpart_id":        counterpart_id,
+        "bounty_amount_usdc":    bounty_amount_usdc,
+        "counterpart_share_pct": counterpart_share_pct,
+    }
+    counterpart_gross = round(bounty_amount_usdc * counterpart_share_pct, 8)
+    tax               = round(counterpart_gross * 0.015, 8)
+    counterpart_net   = round(counterpart_gross - tax, 8)
+    claimant_keep     = round(bounty_amount_usdc - counterpart_gross, 8)
+    endpoint          = f"{_API_BASE}/api/v1/settlement/claim-bounty"
+
+    return json.dumps({
+        "endpoint":    endpoint,
+        "method":      "POST",
+        "body":        body,
+        "body_compact": json.dumps(body, separators=(",", ":")),
+        "header_name": "X-VectraFi-Signature",
+        "split_preview": {
+            "bounty_gross_usdc":    bounty_amount_usdc,
+            "claimant_keeps_usdc":  claimant_keep,
+            "counterpart_gross_usdc": counterpart_gross,
+            "tax_usdc":             tax,
+            "counterpart_net_usdc": counterpart_net,
+        },
+        "auth_errors": {
+            "401": "missing or invalid X-VectraFi-Signature",
+            "400": "insufficient balance or same-agent claim",
+            "404": "agent_id or counterpart_id not registered",
+            "422": "schema validation failure",
+        },
+    }, indent=2)
+
+
+@mcp.tool()
 def get_agent_balance(
     agent_id: Annotated[str, "Agent identifier to look up (e.g. 'agent-zero', 'treasury')"],
 ) -> str:

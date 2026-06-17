@@ -1,27 +1,53 @@
 # Smithery MCP Registry Configuration
-# https://smithery.ai
+# https://smithery.ai/servers/julian-g-roberts/faba-protocol
 #
-# This file allows external agent runtimes to install and run the VectraFi FABA
-# MCP server directly from the Smithery registry without cloning the repo.
+# SYSTEM PYTHON REQUIREMENT
+# Smithery runs this server via your system `python` binary (the one on PATH),
+# NOT the project .venv. Install these packages into your system Python once:
 #
-# Prerequisites (install once):
-#   pip install "mcp>=1.0.0" httpx eth-account sqlalchemy fastapi
-#   - or -
-#   pip install -r requirements.txt
+#   pip install "mcp>=1.0.0" "httpx>=0.28.0" "eth-account>=0.13.0" sqlalchemy
 #
-# The server exposes three tools via stdio transport:
-#   inspect_faba_bounties    -- open bounty/build issues from GitHub
-#   get_protocol_state       -- live SQLite treasury fees and agent count
-#   generate_eip191_template -- pre-filled EIP-191 signing template + steps
+# VENV ALTERNATIVE — mcp_config.json snippet (Claude Desktop / Claude Code):
+#
+#   {
+#     "mcpServers": {
+#       "faba": {
+#         "command": "/absolute/path/to/VectraFi/.venv/bin/python",
+#         "args": ["mcp/faba_server.py"],
+#         "cwd": "/absolute/path/to/VectraFi"
+#       }
+#     }
+#   }
+#
+#   Windows path example:
+#     "command": "C:\\VectraFi\\.venv\\Scripts\\python.exe"
+#
+# OPTIONAL ENV VARS
+#   GITHUB_TOKEN — enables live issue fetch in inspect_faba_bounties;
+#                  without it the tool returns the cached backlog instantly.
+#
+# Tools exposed (stdio transport):
+#   inspect_faba_bounties      -- open bounty/build issues (cache if no GITHUB_TOKEN)
+#   get_protocol_state         -- live SQLite treasury fees and agent count
+#   get_agent_balance          -- sandbox ledger balance for a given agent_id
+#   generate_eip191_template   -- EIP-191 signing template for swap / deposit
+#   build_transfer_payload     -- exact body + compact string for POST /api/v1/settlement/transfer
+#   build_bounty_claim_payload -- exact body + compact string for POST /api/v1/settlement/claim-bounty
 
 startCommand:
   type: stdio
   configSchema:
     type: object
-    properties: {}
+    properties:
+      github_token:
+        type: string
+        description: >
+          Optional GitHub personal access token. When provided, inspect_faba_bounties
+          fetches live issue state instead of returning the cached backlog.
     required: []
   commandFunction: |-
-    (_config) => ({
+    (config) => ({
       command: "python",
-      args: ["mcp/faba_server.py"]
+      args: ["mcp/faba_server.py"],
+      env: config.github_token ? { GITHUB_TOKEN: config.github_token } : {}
     })

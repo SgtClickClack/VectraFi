@@ -1,10 +1,14 @@
 """
 VectraFi baseline test infrastructure.
-
-Run from core-exchange/src so that source modules are on PYTHONPATH:
-    cd core-exchange/src
-    pytest ../../tests/ -v
 """
+import sys
+from pathlib import Path
+
+# Ensure core-exchange src is importable regardless of working directory
+_EXCHANGE_SRC = Path(__file__).resolve().parent.parent / "core-exchange" / "src"
+if str(_EXCHANGE_SRC) not in sys.path:
+    sys.path.insert(0, str(_EXCHANGE_SRC))
+
 import json
 
 import pytest
