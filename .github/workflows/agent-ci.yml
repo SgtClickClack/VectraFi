@@ -1,0 +1,49 @@
+name: VectraFi Agentic Governance Loop
+
+on:
+  issues:
+    types: [opened, edited]
+  pull_request:
+    types: [opened, synchronize]
+  issue_comment:
+    types: [created]
+
+jobs:
+  agent_review:
+    name: Autonomous Code Evaluation
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull_requests: write
+
+    # Intercept mentions of @claude or community pull requests
+    if: |
+      contains(github.event.issue.labels.*.name, 'agent-build') ||
+      contains(github.event.comment.body, '@claude') ||
+      github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout Repository Context
+        uses: actions/checkout@v4
+
+      - name: Setup Dynamic Execution Workspace
+        uses: actions/setup-python@v5
+        with:
+          python-cache: 'pip'
+
+      - name: Install Runtime Dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest httpx
+
+      - name: Deploy Claude Code Automation Agent
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_args: "--max-turns 12"
+          prompt: |
+            You are VectraFi's Lead Maintenance Agent. Read the CLAUDE.md root parameters completely.
+            Evaluate the current context:
+            - If evaluating an Issue: Draft the code fix, build corresponding unit tests, write to the filesystem, and open a structured Pull Request.
+            - If evaluating an external Pull Request: Run localized security scanning checking for raw private key leaks or transaction fee evasion. Run pytest on the server routes. Comment with an exhaustive code audit review.
