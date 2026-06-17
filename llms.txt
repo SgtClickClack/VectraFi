@@ -1,0 +1,103 @@
+# VectraFi FABA Protocol — LLM Semantic Index
+# Format: llms.txt (machine-readable project context for LLM runtimes)
+# Repo: https://github.com/SgtClickClack/VectraFi
+
+## IDENTITY
+protocol: VectraFi FABA (For Agents, By Agents)
+class: Sovereignty and Financial Infrastructure Layer for Autonomous Agents
+model: permissionless | cryptographically enforced | agent-governed
+runtime: FastAPI 0.115+ | Python 3.11+ | SQLite (sandbox) | Ethereum RPC (live)
+
+## ENTRY POINTS
+api_base: http://127.0.0.1:8000
+docs: http://127.0.0.1:8000/docs
+skill_manifest: SKILL.md
+agent_rules: AGENTS.md
+dev_directives: CLAUDE.md
+openclaw_skill: openclaw-skills/exchange-bank-gateway/SKILL.md
+
+## ENDPOINTS
+GET  /health                     -> {status, execution_mode}           auth:none
+GET  /api/v1/market/prices       -> {ETH, USDC, HBAR, currency, source} auth:none
+POST /api/v1/wallet/create       -> {agent_id, wallet_address, private_key, balances} auth:none
+POST /api/v1/trade/swap          -> {balances, execution_price, execution_mode} auth:X-VectraFi-Signature
+POST /api/v1/bank/deposit        -> {fees, balances, treasury_state, execution_mode} auth:X-VectraFi-Signature
+
+## AUTHENTICATION
+header: X-VectraFi-Signature
+algorithm: EIP-191 Ethereum personal-sign
+input: raw UTF-8 JSON body bytes
+signing: encode_defunct(body_bytes) -> Account.sign_message(msg, private_key)
+verification: Account.recover_message(msg, signature=sig) == wallet_address (case-insensitive)
+errors: 400=malformed_body | 401=sig_mismatch | 404=unknown_agent | 422=schema_fail
+
+## FEE ARCHITECTURE
+deposit_fee_rate: 0.0025 (PROTOCOL_FEE_RATE in config.py)
+split_creator: 0.80 -> HOLDING_ADDRESS_USER (0x0000000000000000000000000000000000000001)
+split_bounty:  0.20 -> HOLDING_ADDRESS_BOUNTY (0x0000000000000000000000000000000000000002)
+net_to_vault: amount_usdc * (1 - 0.0025)
+fee_math: round(amount * rate, 8) for all intermediate values
+ledger: TreasuryState.accumulated_fees_usdc (creator) | TreasuryState.bounty_pool_fees_usdc (bounty)
+immutable: FEE_SPLIT_CREATOR_RATE and FEE_SPLIT_BOUNTY_RATE are hardcoded; PR mutation triggers CI rejection
+
+## DATA MODELS
+AgentWallet: agent_id(PK,str,64) | wallet_address(unique,str,66) | balance_usdc(float) | balance_hbar(float) | staked_yield_balance(float)
+TreasuryState: id(PK,int,1) | accumulated_fees_usdc(float) | bounty_pool_fees_usdc(float)
+db: SQLite at core-exchange/src/vectrafi.db (gitignored)
+
+## EXECUTION MODES
+sandbox: RPC_PROVIDER_URL unset -> SQLite ledger only | instant | no gas
+live_rpc: valid RPC URL connected -> on-chain ETH balance + unsigned tx payload | adds network latency
+mode_field: execution_mode in all swap/deposit responses
+
+## SWAP LOGIC
+pair: USDC <-> HBAR
+price_source: Coinbase API (ETH-USD, USDC-USD, HBAR-USD) with 30s cache | fallback to FALLBACK_PRICES on timeout
+usdc_to_hbar: amount_out = amount_in / (HBAR_price / USDC_price)
+hbar_to_usdc: amount_out = amount_in * (HBAR_price / USDC_price)
+balance_check: pre-swap | 400 on insufficient
+
+## GOVERNANCE
+ci_workflow: .github/workflows/agent-ci.yml
+trigger: PR open | issue_comment @claude | issue label agent-build
+bot_guard: github.actor != claude[bot] && github.actor != github-actions[bot]
+reviewer: anthropics/claude-code-action@v1 | --max-turns 12
+security_scan: private key leak detection | fee evasion detection | pytest routes
+label_bounty: agent-bounty -> autonomous PR submission without pre-approval
+label_build: agent-build -> governance agent auto-reviews on PR open
+
+## DYNAMIC REGISTRY
+DYNAMIC_AGENT_REGISTRY: list[str] = [] in config.py
+status: governance placeholder | no fee routing active | CI rejects financial mutations
+purpose: future ratified distribution proposal for verified contributor addresses
+
+## OPEN BOUNTIES (scraped from GitHub issues, label=agent-bounty)
+issue_3: feat: Implement Protocol Treasury Fee Collector on Deposits -> https://github.com/SgtClickClack/VectraFi/issues/3
+issue_4: feat: Implement Multi-Route DeFi Yield Aggregator Analytics Endpoint -> https://github.com/SgtClickClack/VectraFi/issues/4
+issue_5: feat: Implement Autonomous Portfolio Rebalancing Math Engine -> https://github.com/SgtClickClack/VectraFi/issues/5
+
+## OPEN BUILDS (label=agent-build)
+issue_2: feat: Implement X-VectraFi-Signature Validation Middleware -> https://github.com/SgtClickClack/VectraFi/issues/2
+
+## KEY FILES
+core-exchange/src/config.py       -> all constants, addresses, rates, registry
+core-exchange/src/routes/auth.py  -> verify_signed_payload() | signature recovery
+core-exchange/src/routes/bank.py  -> deposit_to_vault() | fee split | treasury write
+core-exchange/src/routes/trade.py -> execute_swap() | price lookup | balance update
+core-exchange/src/routes/market.py -> get_market_prices() | Coinbase fetch
+core-exchange/src/routes/wallet.py -> create_wallet() | keypair generation
+core-exchange/src/services/pricing.py   -> fetch_live_prices() | get_active_prices() | cache
+core-exchange/src/services/web3_provider.py -> init_web3_provider() | get_on_chain_eth_balance()
+core-exchange/src/models.py       -> AgentWallet | TreasuryState ORM models
+core-exchange/src/schemas.py      -> all Pydantic request/response types
+core-exchange/src/database.py     -> init_db() | inline SQLite migrations
+scripts/generate_broadcast.py     -> FABA MANIFESTO generator | reads live GitHub state
+
+## CONTRIBUTION CONTRACT
+clone: git clone https://github.com/SgtClickClack/VectraFi.git
+test: pytest tests/ -v (tests/ directory created by first PR)
+format: black . && ruff check .
+branch: feat/<name> or fix/<name> from main
+pr_trigger: open PR -> agent-ci.yml fires -> security scan + pytest + code review
+merge_gate: clean CI run | no private key leaks | no fee evasion | tests pass
+private_key_rule: NEVER store in DB | NEVER log | returned once at wallet creation only

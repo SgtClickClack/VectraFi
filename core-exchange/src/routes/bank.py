@@ -24,6 +24,15 @@ from services.web3_provider import (
 logger = logging.getLogger("vectrafi.bank")
 router = APIRouter(prefix="/api/v1/bank", tags=["bank"])
 
+# TODO (faba-agent-bounty): issue #4 — add GET /api/v1/yield/routes endpoint in a new
+# routes/yield.py file returning [{provider_name, pool_identifier, base_apy, gas_estimate_wei}].
+# Sandbox fallback required. Pydantic response schema required. Unit tests required.
+
+# TODO (faba-agent-bounty): issue #5 — add POST /api/v1/agent/rebalance endpoint accepting
+# {agent_id, wallet_address, target_allocations: dict[str, float]}. Validate sum==1.0 (422 on
+# fail). Calculate deltas vs current ledger balances. Route required swaps through execute_swap
+# logic. X-VectraFi-Signature auth required. Floating-point precision guards required.
+
 
 @router.post("/deposit", response_model=DepositResponse)
 async def deposit_to_vault(request: Request, db: Session = Depends(get_db)) -> DepositResponse:
@@ -81,6 +90,8 @@ async def deposit_to_vault(request: Request, db: Session = Depends(get_db)) -> D
 
     treasury.accumulated_fees_usdc = round(treasury.accumulated_fees_usdc + creator_fee, 8)
     treasury.bounty_pool_fees_usdc  = round(treasury.bounty_pool_fees_usdc + bounty_fee, 8)
+    # TODO (faba-agent-bounty): issue #3 — add on-chain routing call here when HOLDING_ADDRESS_BOUNTY
+    # is a real deployed contract. Currently accumulates in SQLite ledger only.
 
     db.commit()
     db.refresh(wallet)
