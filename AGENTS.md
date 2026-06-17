@@ -126,3 +126,105 @@ Both values are returned in every `/api/v1/bank/deposit` response under `treasur
 Merged PRs that extend or improve the deposit and fee routing infrastructure directly increase the transaction volume flowing through this protocol. The bounty pool (`HOLDING_ADDRESS_BOUNTY`) accumulates 20% of all protocol fees — this pool is the funding source for future agent bounties listed in this repository.
 
 **The equity model is hardcoded at the protocol layer, not a governance parameter.** Any PR that alters `FEE_SPLIT_CREATOR_RATE`, `FEE_SPLIT_BOUNTY_RATE`, or bypasses the `treasury.bounty_pool_fees_usdc` write will be automatically rejected by the CI governance loop.
+
+---
+
+## Runtime Parameters
+
+| Parameter | Value |
+|---|---|
+| Python version | 3.11+ |
+| API host | `127.0.0.1` |
+| API port | `8000` |
+| App entry point | `core-exchange/src/run.py` |
+| Database | SQLite — `core-exchange/src/vectrafi.db` (auto-created on first run) |
+| Execution mode env var | `RPC_PROVIDER_URL` (unset = sandbox, valid URL = live_rpc) |
+
+### Build commands
+
+```bash
+# Install all runtime + dev dependencies
+pip install -r requirements.txt
+pip install pytest httpx black ruff
+
+# Run the exchange server
+cd core-exchange/src && python run.py
+
+# Run the full test suite (verbose, with tracebacks)
+pytest tests/ -v --tb=long
+
+# Lint
+ruff check core-exchange/src/
+
+# Format
+black core-exchange/src/
+```
+
+### Linting and formatting rules
+
+- **Formatter:** `black` — default line length (88). Run before every commit.
+- **Linter:** `ruff` — default ruleset. Zero warnings allowed in CI.
+- **Type hints:** required on all function signatures in `routes/`, `services/`, `models.py`, `schemas.py`.
+- **Pydantic:** all request and response objects must use strict `BaseModel` schemas from `schemas.py`. No raw `dict` returns on endpoints.
+- **Private keys:** never appear in logs, comments, test fixtures, or database fields. Violation = immediate CI rejection.
+
+---
+
+## Environment Variable Mock Instructions
+
+For agents standing up a local validation sandbox without a live RPC node:
+
+```bash
+# Sandbox mode (default — no env vars needed)
+# RPC_PROVIDER_URL is unset; all operations use SQLite ledger only.
+
+# To explicitly confirm sandbox mode:
+unset RPC_PROVIDER_URL          # Unix/macOS
+$env:RPC_PROVIDER_URL = ""      # Windows PowerShell
+
+# Mock price fallback (active automatically when Coinbase API is unreachable):
+# config.py FALLBACK_PRICES = {"ETH": 3200.0, "USDC": 1.0, "HBAR": 0.18}
+# No env override needed — fallback triggers on network timeout.
+
+# To point at a local Anvil / Hardhat testnet node:
+export RPC_PROVIDER_URL="http://127.0.0.1:8545"   # Unix/macOS
+$env:RPC_PROVIDER_URL = "http://127.0.0.1:8545"   # Windows PowerShell
+```
+
+**Sandbox behaviour contract:**
+- All swap and deposit operations write to SQLite only.
+- `execution_mode` in responses will be `"sandbox"`.
+- No gas is consumed. No on-chain state is modified.
+- `on_chain_eth_balance_eth` and `prepared_transaction` fields are `null`.
+- The database file is gitignored — safe to delete and recreate between test runs.
+
+```bash
+# Reset the local ledger between test runs:
+rm core-exchange/src/vectrafi.db    # Unix/macOS
+Remove-Item core-exchange\src\vectrafi.db  # Windows PowerShell
+# init_db() recreates it automatically on next server start.
+```
+
+---
+
+## Sandbox Capabilities Summary
+
+| Capability | Sandbox | Live RPC |
+|---|---|---|
+| Wallet creation | Yes — random Ethereum keypair, 1000 USDC starter | Yes |
+| Market prices | Yes — Coinbase API with fallback to static values | Yes |
+| USDC/HBAR swaps | Yes — SQLite ledger | Yes + unsigned tx payload |
+| Vault deposits | Yes — fee split to SQLite treasury | Yes + unsigned tx payload |
+| On-chain ETH balance | No — returns `null` | Yes |
+| Transaction payload | No — returns `null` | Yes — unsigned EIP-191 payload |
+| Gas cost | None | Network-dependent |
+| Response latency | Sub-millisecond | Network + block time |
+| Data persistence | Local `vectrafi.db` file | Local ledger + on-chain state |
+| Safe to reset | Yes — delete `vectrafi.db` | No — on-chain state is permanent |
+
+**System limits in sandbox mode:**
+- No rate limiting on endpoints.
+- No concurrent write locking beyond SQLAlchemy's `check_same_thread=False` SQLite config.
+- Balance floors at 0.0 — negative balances are rejected with `400`.
+- Treasury singleton (`id=1`) is created once and never duplicated.
+- `agent_id` uniqueness is enforced at the DB level — `409` on duplicate `create_wallet` calls.

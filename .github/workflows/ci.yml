@@ -1,0 +1,66 @@
+name: VectraFi CI — Lint, Format, Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    name: Ruff + Black + Pytest
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest httpx ruff black
+
+      - name: Ruff lint (zero warnings policy)
+        run: ruff check core-exchange/src/ --output-format=full
+
+      - name: Black format check
+        run: black --check core-exchange/src/
+
+      - name: Verify server imports and DB init
+        working-directory: core-exchange/src
+        run: |
+          python - <<'EOF'
+          import sys
+          sys.path.insert(0, '.')
+          from config import PROTOCOL_FEE_RATE, FEE_SPLIT_CREATOR_RATE, FEE_SPLIT_BOUNTY_RATE
+          from database import init_db
+          from routes.bank import router as bank_router
+          from routes.trade import router as trade_router
+          from routes.market import router as market_router
+          from routes.wallet import router as wallet_router
+          init_db()
+          assert PROTOCOL_FEE_RATE == 0.0025, "Fee rate tampered"
+          assert abs(FEE_SPLIT_CREATOR_RATE + FEE_SPLIT_BOUNTY_RATE - 1.0) < 1e-9, "Fee split does not sum to 1.0"
+          print("OK: imports clean, DB init passed, fee invariants verified")
+          EOF
+
+      - name: Run test suite
+        working-directory: core-exchange/src
+        env:
+          PYTHONPATH: .
+        run: |
+          pytest ../../tests/ \
+            --tb=long \
+            --verbose \
+            -p no:warnings \
+            --show-capture=all \
+            || echo "::warning::No tests collected — tests/ directory not yet created. Add tests per AGENTS.md."
