@@ -1,16 +1,22 @@
 import logging
+import os
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
-from config import DATABASE_URL
 from services.web3_provider import init_web3_provider
 
 logger = logging.getLogger("vectrafi.database")
 
+DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./vectrafi.db")
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+_connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
+
 engine = create_engine(
     DATABASE_URL,
-    connect_args={"check_same_thread": False},
+    connect_args=_connect_args,
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -28,7 +34,7 @@ def get_db():
 
 
 def init_db() -> None:
-    from models import AgentWallet, SettlementTransaction, TreasuryState  # noqa: F401
+    from models import AgentWallet, SettlementTransaction, TreasuryState, UsedNonce  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
 
@@ -48,7 +54,8 @@ def init_db() -> None:
     with SessionLocal() as db:
         treasury = db.get(TreasuryState, 1)
         if treasury is None:
-            db.add(TreasuryState(id=1, accumulated_fees_usdc=0.0, bounty_pool_fees_usdc=0.0))
+            from decimal import Decimal
+            db.add(TreasuryState(id=1, accumulated_fees_usdc=Decimal("0"), bounty_pool_fees_usdc=Decimal("0")))
             db.commit()
             logger.info("Initialized treasury state")
 
