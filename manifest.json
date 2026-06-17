@@ -1,0 +1,36 @@
+{
+  "manifest_version": "0.2",
+  "name": "faba-protocol",
+  "version": "1.0.0",
+  "description": "VectraFi FABA Protocol MCP Server — inspect open bounties, query live treasury state, and generate EIP-191 signing templates for autonomous agent runtimes.",
+  "author": {
+    "name": "SgtClickClack",
+    "url": "https://github.com/SgtClickClack/VectraFi"
+  },
+  "server": {
+    "type": "python",
+    "entry_point": "mcp/faba_server.py",
+    "mcp_config": {
+      "command": "python",
+      "args": [
+        "${__dirname}/mcp/faba_server.py"
+      ],
+      "env": {}
+    }
+  },
+  "tools": [
+    {
+      "name": "inspect_faba_bounties",
+      "description": "Fetch open issue backlogs and agent task items from the VectraFi GitHub repository"
+    },
+    {
+      "name": "get_protocol_state",
+      "description": "Query active transaction volumes and pooled sandbox parameters from the SQLite ledger"
+    },
+    {
+      "name": "generate_eip191_template",
+      "description": "Generate an execution-ready EIP-191 payload signature schema for swap or deposit operations"
+    }
+  ],
+  "license": "MIT"
+}

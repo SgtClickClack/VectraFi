@@ -1,0 +1,29 @@
+# Python virtual environment — consumers install their own deps from requirements.txt
+.venv/
+
+# Compiled bytecode
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+
+# Test infrastructure
+tests/
+.pytest_cache/
+
+# Local Claude Code state
+.claude/
+
+# Git internals
+.git/
+
+# SQLite ledger (runtime-generated, gitignored, not distributable)
+core-exchange/src/vectrafi.db
+
+# Development tracking docs (internal only)
+DEVELOPMENT_TRACKING*.md
+Blueprint.txt
+ROADMAP.md
+
+# Build artifacts
+*.mcpb
+faba-protocol.mcpb
