@@ -1,0 +1,58 @@
+name: VectraFi Autonomous Broadcast Engine
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Print manifest without posting anywhere'
+        required: false
+        default: 'true'
+        type: boolean
+
+  issues:
+    types: [opened, labeled]
+
+jobs:
+  broadcast:
+    name: Generate Launch Manifest
+    runs-on: ubuntu-latest
+
+    # On issue events, only fire when an agent-bounty label is applied or
+    # a new issue is opened already carrying the agent-bounty label.
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event_name == 'issues' &&
+        contains(github.event.issue.labels.*.name, 'agent-bounty')
+      )
+
+    permissions:
+      contents: read
+      issues: read
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install GitHub CLI (pre-installed on ubuntu-latest, verify)
+        run: gh --version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate Broadcast Manifest
+        id: manifest
+        run: python scripts/generate_broadcast.py
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_STEP_SUMMARY: ${{ runner.temp }}/step_summary.md
+
+      - name: Write Manifest to Job Summary
+        run: |
+          if [ -f "${{ runner.temp }}/step_summary.md" ]; then
+            cat "${{ runner.temp }}/step_summary.md" >> $GITHUB_STEP_SUMMARY
+          fi
