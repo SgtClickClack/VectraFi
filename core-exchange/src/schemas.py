@@ -1,3 +1,4 @@
+from decimal import Decimal
 import re
 from typing import Any, Literal
 
@@ -105,7 +106,6 @@ class DepositResponse(BaseModel):
     on_chain_eth_balance_eth: float | None = None
     prepared_transaction: dict[str, Any] | None = None
 
-
 class SettlementTransferRequest(BaseModel):
     agent_id: str = Field(..., min_length=1, max_length=64, description="Sender agent_id")
     wallet_address: str = Field(..., min_length=42, max_length=42)
@@ -197,6 +197,69 @@ class RecentTransactionItem(BaseModel):
     tx_type: str
     created_at: int
     on_chain_status: str | None = None
+
+
+SUPPORTED_REBALANCE_TOKENS = {"USDC", "HBAR"}
+REBALANCE_ALLOCATION_EPSILON = Decimal("0.00000001")
+
+
+class RebalanceRequest(BaseModel):
+    agent_id: str = Field(..., min_length=1, max_length=64)
+    wallet_address: str = Field(
+        ...,
+        min_length=42,
+        max_length=42,
+        description="Registered wallet address; must match the recovered signature signer.",
+    )
+    target_allocations: dict[str, float] = Field(
+        ...,
+        min_length=1,
+        description="Target portfolio allocation by token. Supported ledger tokens: USDC, HBAR.",
+    )
+
+    @field_validator("target_allocations")
+    @classmethod
+    def validate_target_allocations(cls, value: dict[str, float]) -> dict[str, float]:
+        unsupported = sorted(set(value) - SUPPORTED_REBALANCE_TOKENS)
+        if unsupported:
+            raise ValueError(f"Unsupported rebalance token(s): {', '.join(unsupported)}")
+
+        total = Decimal("0")
+        for token, allocation in value.items():
+            allocation_decimal = Decimal(str(allocation))
+            if allocation_decimal < 0 or allocation_decimal > 1:
+                raise ValueError(f"{token} allocation must be between 0 and 1")
+            total += allocation_decimal
+
+        if abs(total - Decimal("1")) > REBALANCE_ALLOCATION_EPSILON:
+            raise ValueError("target_allocations must sum to exactly 1.0")
+
+        return value
+
+
+class RebalanceSwap(BaseModel):
+    from_token: Literal["USDC", "HBAR"]
+    to_token: Literal["USDC", "HBAR"]
+    amount_in: float
+    amount_out: float
+    execution_price: float
+
+
+class RebalanceResponse(BaseModel):
+    agent_id: str
+    wallet_address: str
+    target_allocations: dict[str, float]
+    current_allocations_before: dict[str, float]
+    current_allocations_after: dict[str, float]
+    portfolio_value_usdc_before: float
+    portfolio_value_usdc_after: float
+    swaps: list[RebalanceSwap]
+    already_balanced: bool
+    balance_usdc: float
+    balance_hbar: float
+    execution_mode: Literal["sandbox", "live_rpc"]
+    on_chain_eth_balance_eth: float | None = None
+    prepared_transaction: dict[str, Any] | None = None
 
 
 class ErrorResponse(BaseModel):

@@ -12,6 +12,7 @@ from database import init_db
 from routes.analytics import record_latency
 from routes.analytics import router as analytics_router
 from routes.arbitrage import router as arbitrage_router
+from routes.agent import router as agent_router
 from routes.bank import router as bank_router
 from routes.market import router as market_router
 from routes.settlement import router as settlement_router
@@ -50,6 +51,7 @@ app.include_router(wallet_router)
 app.include_router(trade_router)
 app.include_router(bank_router)
 app.include_router(settlement_router)
+app.include_router(agent_router)
 
 
 @app.middleware("http")
