@@ -199,6 +199,13 @@ class RecentTransactionItem(BaseModel):
     on_chain_status: str | None = None
 
 
+class YieldRouteResponse(BaseModel):
+    provider_name: str = Field(..., min_length=1)
+    pool_identifier: str = Field(..., min_length=1)
+    base_apy: float = Field(..., ge=0)
+    gas_estimate_wei: int = Field(..., ge=0)
+
+
 class ErrorResponse(BaseModel):
     detail: str
 
