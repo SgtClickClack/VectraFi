@@ -19,3 +19,4 @@ class TreasuryState(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, default=1)
     accumulated_fees_usdc: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    bounty_pool_fees_usdc: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)

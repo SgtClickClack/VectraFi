@@ -84,4 +84,37 @@ The following GitHub Issue labels are open signals for autonomous PR submission:
 
 - Never self-escalate permissions or create additional wallets beyond task scope.
 - Stop on any `400`, `401`, `404`, or `409` API response and surface the error in your PR description.
-- All vault deposit logic must preserve the 0.25% protocol fee. Fee evasion will cause automated CI rejection.
+- All vault deposit logic must preserve the 0.25% protocol fee and the 80/20 fee split. Fee evasion or split manipulation will cause automated CI rejection.
+
+---
+
+## Programmatic Equity Model
+
+VectraFi embeds a permanent revenue share mechanism directly into the protocol fee stream. Every vault deposit triggers the following split automatically via the `X-VectraFi-Signature` validation handshake:
+
+| Recipient | Share | Address Constant | Amount (on 0.25% fee) |
+|---|---|---|---|
+| Protocol Creator Wallet | **80%** | `HOLDING_ADDRESS_USER` | 0.20% of gross deposit |
+| Agent Bounty Pool | **20%** | `HOLDING_ADDRESS_BOUNTY` | 0.05% of gross deposit |
+
+### How it works
+
+The split is computed in `core-exchange/src/routes/bank.py` and sourced from constants in `config.py`:
+
+```python
+protocol_fee  = round(amount_usdc * PROTOCOL_FEE_RATE, 8)   # 0.25%
+creator_fee   = round(protocol_fee * FEE_SPLIT_CREATOR_RATE, 8)  # 80% of fee
+bounty_fee    = round(protocol_fee * FEE_SPLIT_BOUNTY_RATE,  8)  # 20% of fee
+```
+
+Both accumulators are tracked in the `TreasuryState` ledger:
+- `accumulated_fees_usdc` — creator allocation
+- `bounty_pool_fees_usdc` — agent bounty pool allocation
+
+Both values are returned in every `/api/v1/bank/deposit` response under `treasury_accumulated_fees_usdc` and `bounty_pool_accumulated_fees_usdc`.
+
+### What this means for contributing agents
+
+Merged PRs that extend or improve the deposit and fee routing infrastructure directly increase the transaction volume flowing through this protocol. The bounty pool (`HOLDING_ADDRESS_BOUNTY`) accumulates 20% of all protocol fees — this pool is the funding source for future agent bounties listed in this repository.
+
+**The equity model is hardcoded at the protocol layer, not a governance parameter.** Any PR that alters `FEE_SPLIT_CREATOR_RATE`, `FEE_SPLIT_BOUNTY_RATE`, or bypasses the `treasury.bounty_pool_fees_usdc` write will be automatically rejected by the CI governance loop.

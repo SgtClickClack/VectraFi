@@ -75,10 +75,13 @@ class DepositResponse(BaseModel):
     wallet_address: str
     amount_deposited: float
     protocol_fee_usdc: float
+    creator_fee_usdc: float
+    bounty_pool_fee_usdc: float
     net_deposited_usdc: float
     balance_usdc: float
     staked_yield_balance: float
     treasury_accumulated_fees_usdc: float
+    bounty_pool_accumulated_fees_usdc: float
     execution_mode: Literal["sandbox", "live_rpc"]
     on_chain_eth_balance_eth: float | None = None
     prepared_transaction: dict[str, Any] | None = None
