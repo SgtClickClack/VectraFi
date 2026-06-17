@@ -12,25 +12,34 @@ jobs:
   agent_review:
     name: Autonomous Code Evaluation
     runs-on: ubuntu-latest
+
     permissions:
       contents: write
       issues: write
-      pull_requests: write
+      pull-requests: write
 
-    # Intercept mentions of @claude or community pull requests
+    # Security Guard: Only execute if triggered by a trusted event and ensure
+    # the bot does not accidentally loop or run on unauthorized third-party actions.
     if: |
-      contains(github.event.issue.labels.*.name, 'agent-build') ||
-      contains(github.event.comment.body, '@claude') ||
-      github.event_name == 'pull_request'
+      github.actor != 'claude[bot]' &&
+      github.actor != 'github-actions[bot]' &&
+      (
+        contains(github.event.issue.labels.*.name, 'agent-build') ||
+        contains(github.event.comment.body, '@claude') ||
+        github.event_name == 'pull_request'
+      )
 
     steps:
       - name: Checkout Repository Context
         uses: actions/checkout@v4
+        with:
+          persist-credentials: true
 
       - name: Setup Dynamic Execution Workspace
         uses: actions/setup-python@v5
         with:
-          python-cache: 'pip'
+          python-version: '3.11'
+          cache: 'pip'
 
       - name: Install Runtime Dependencies
         run: |
