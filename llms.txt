@@ -35,8 +35,17 @@ errors: 400=malformed_body | 401=sig_mismatch | 404=unknown_agent | 422=schema_f
 
 ## FEE ARCHITECTURE
 deposit_fee_rate: 0.0025 (PROTOCOL_FEE_RATE in config.py)
-split_creator: 0.80 -> HOLDING_ADDRESS_USER (0x0000000000000000000000000000000000000001)
-split_bounty:  0.20 -> HOLDING_ADDRESS_BOUNTY (0x0000000000000000000000000000000000000002)
+swap_fee_free: swaps between USDC and HBAR carry ZERO protocol fee in this protocol version
+split_creator: 0.80 -> HOLDING_ADDRESS_USER
+  STANDALONE SANDBOX PLACEHOLDER (0x0000000000000000000000000000000000000001) — effective burn
+  address; fees accrue in TreasuryState.accumulated_fees_usdc (SQLite ledger) only during alpha.
+  No mainnet distribution occurs until an L2 governance proposal is ratified and this constant
+  is replaced with a real deployed contract address.
+split_bounty:  0.20 -> HOLDING_ADDRESS_BOUNTY
+  STANDALONE SANDBOX PLACEHOLDER (0x0000000000000000000000000000000000000002) — same constraint
+  as HOLDING_ADDRESS_USER. Bounty pool accrues in TreasuryState.bounty_pool_fees_usdc (SQLite
+  ledger) only. No on-chain routing is active. Constant is a protocol-layer invariant; mutation
+  triggers automated CI rejection regardless of code quality.
 net_to_vault: amount_usdc * (1 - 0.0025)
 fee_math: round(amount * rate, 8) for all intermediate values
 ledger: TreasuryState.accumulated_fees_usdc (creator) | TreasuryState.bounty_pool_fees_usdc (bounty)
@@ -54,6 +63,7 @@ mode_field: execution_mode in all swap/deposit responses
 
 ## SWAP LOGIC
 pair: USDC <-> HBAR
+fee: NONE — swaps are permanently fee-free in this protocol version
 price_source: Coinbase API (ETH-USD, USDC-USD, HBAR-USD) with 30s cache | fallback to FALLBACK_PRICES on timeout
 usdc_to_hbar: amount_out = amount_in / (HBAR_price / USDC_price)
 hbar_to_usdc: amount_out = amount_in * (HBAR_price / USDC_price)

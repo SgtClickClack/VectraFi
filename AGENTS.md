@@ -105,6 +105,19 @@ VectraFi embeds a permanent revenue share mechanism directly into the protocol f
 | Protocol Creator Wallet | **80%** | `HOLDING_ADDRESS_USER` | 0.20% of gross deposit |
 | Agent Bounty Pool | **20%** | `HOLDING_ADDRESS_BOUNTY` | 0.05% of gross deposit |
 
+> **ALPHA PHASE NOTICE — STANDALONE SANDBOX PLACEHOLDERS**
+>
+> `HOLDING_ADDRESS_USER` (`0x0000000000000000000000000000000000000001`) and
+> `HOLDING_ADDRESS_BOUNTY` (`0x0000000000000000000000000000000000000002`) are effective burn
+> addresses — no private key exists for either address, and no funds can ever be withdrawn from
+> them. During the alpha phase, all accumulated fees reside exclusively in the SQLite
+> `TreasuryState` ledger (`accumulated_fees_usdc` and `bounty_pool_fees_usdc`). No on-chain
+> distribution occurs until an L2 governance proposal is ratified and these constants are replaced
+> with real deployed contract addresses in `config.py`. Both constants are protocol-layer
+> invariants — any PR that modifies them triggers automated CI rejection.
+
+**Swap fee status:** USDC/HBAR swaps are permanently **fee-free** in this protocol version. The 0.25% protocol fee applies exclusively to vault deposits (`POST /api/v1/bank/deposit`).
+
 ### How it works
 
 The split is computed in `core-exchange/src/routes/bank.py` and sourced from constants in `config.py`:

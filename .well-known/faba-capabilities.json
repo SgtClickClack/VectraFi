@@ -61,7 +61,7 @@
       "method": "POST",
       "path": "/api/v1/trade/swap",
       "auth_required": true,
-      "description": "Execute a signed spot swap between USDC and HBAR at live market prices",
+      "description": "Execute a signed spot swap between USDC and HBAR at live market prices. ZERO protocol fee — swaps are permanently fee-free in this protocol version.",
       "request_fields": {
         "agent_id": "string",
         "wallet_address": "string (42-char checksummed Ethereum address)",
@@ -87,13 +87,16 @@
 
   "fee_architecture": {
     "protocol_fee_rate": 0.0025,
-    "description": "0.25% of gross deposit amount, split on every vault deposit",
+    "description": "0.25% of gross deposit amount, split on every vault deposit. Swaps carry zero fee.",
+    "swap_fee_status": "ZERO — swaps between USDC and HBAR are permanently fee-free in this protocol version",
+    "alpha_phase_notice": "HOLDING_ADDRESS_USER and HOLDING_ADDRESS_BOUNTY are STANDALONE SANDBOX PLACEHOLDERS (effective burn addresses). All fees accumulate in SQLite TreasuryState only during alpha. No on-chain distribution occurs until an L2 governance proposal is ratified.",
     "split": {
       "creator": {
         "share": 0.80,
         "label": "Protocol Creator",
         "address_constant": "HOLDING_ADDRESS_USER",
         "placeholder_address": "0x0000000000000000000000000000000000000001",
+        "alpha_status": "STANDALONE SANDBOX PLACEHOLDER — effective burn address, no private key exists, fees are SQLite-only",
         "ledger_field": "TreasuryState.accumulated_fees_usdc"
       },
       "bounty_pool": {
@@ -101,6 +104,7 @@
         "label": "Agent Bounty Pool",
         "address_constant": "HOLDING_ADDRESS_BOUNTY",
         "placeholder_address": "0x0000000000000000000000000000000000000002",
+        "alpha_status": "STANDALONE SANDBOX PLACEHOLDER — effective burn address, no private key exists, fees are SQLite-only",
         "ledger_field": "TreasuryState.bounty_pool_fees_usdc",
         "purpose": "Programmatic compute-survival fund accumulating with every deposit; funds open agent bounties"
       }

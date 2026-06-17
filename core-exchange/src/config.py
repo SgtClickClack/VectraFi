@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from typing import Final
 
 BASE_DIR = Path(__file__).resolve().parent
 DATABASE_URL = f"sqlite:///{BASE_DIR / 'vectrafi.db'}"
@@ -21,13 +22,16 @@ COINBASE_API_BASE = "https://api.coinbase.com/v2/prices"
 HTTP_TIMEOUT_SECONDS = 5.0
 PRICE_CACHE_TTL_SECONDS = 30.0
 
-PROTOCOL_FEE_RATE = 0.0025
+PROTOCOL_FEE_RATE: Final[float] = 0.0025
 
 # Fee split: 80% to protocol creator, 20% to agent bounty pool.
-HOLDING_ADDRESS_USER   = "0x0000000000000000000000000000000000000001"  # Protocol Creator placeholder
-HOLDING_ADDRESS_BOUNTY = "0x0000000000000000000000000000000000000002"  # Agent Bounty Pool placeholder
-FEE_SPLIT_CREATOR_RATE = 0.80
-FEE_SPLIT_BOUNTY_RATE  = 0.20
+# STANDALONE SANDBOX PLACEHOLDERS — these are effective burn addresses (no known private key).
+# Fees accumulate in TreasuryState (SQLite) only during alpha. No mainnet distribution occurs
+# until an L2 governance proposal is ratified and real contract addresses replace these constants.
+HOLDING_ADDRESS_USER   = "0x0000000000000000000000000000000000000001"  # STANDALONE SANDBOX PLACEHOLDER
+HOLDING_ADDRESS_BOUNTY = "0x0000000000000000000000000000000000000002"  # STANDALONE SANDBOX PLACEHOLDER
+FEE_SPLIT_CREATOR_RATE: Final[float] = 0.80
+FEE_SPLIT_BOUNTY_RATE: Final[float]  = 0.20
 
 DEFAULT_USDC_BALANCE = 1000.0
 DEFAULT_HBAR_BALANCE = 0.0

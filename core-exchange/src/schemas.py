@@ -1,6 +1,7 @@
+import re
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class MarketPricesResponse(BaseModel):
@@ -43,6 +44,15 @@ class SwapRequest(BaseModel):
     to_token: Literal["USDC", "HBAR"]
     amount: float = Field(..., gt=0)
 
+    @field_validator("wallet_address")
+    @classmethod
+    def _validate_eth_address(cls, v: str) -> str:
+        if not re.fullmatch(r"0x[0-9a-fA-F]{40}", v):
+            raise ValueError(
+                "wallet_address must be a 42-char Ethereum address: 0x followed by 40 hex characters"
+            )
+        return v
+
 
 class SwapResponse(BaseModel):
     agent_id: str
@@ -68,6 +78,15 @@ class DepositRequest(BaseModel):
         description="Registered wallet address; must match the recovered signature signer.",
     )
     amount_usdc: float = Field(..., gt=0)
+
+    @field_validator("wallet_address")
+    @classmethod
+    def _validate_eth_address(cls, v: str) -> str:
+        if not re.fullmatch(r"0x[0-9a-fA-F]{40}", v):
+            raise ValueError(
+                "wallet_address must be a 42-char Ethereum address: 0x followed by 40 hex characters"
+            )
+        return v
 
 
 class DepositResponse(BaseModel):
