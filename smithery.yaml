@@ -1,0 +1,27 @@
+# Smithery MCP Registry Configuration
+# https://smithery.ai
+#
+# This file allows external agent runtimes to install and run the VectraFi FABA
+# MCP server directly from the Smithery registry without cloning the repo.
+#
+# Prerequisites (install once):
+#   pip install "mcp>=1.0.0" httpx eth-account sqlalchemy fastapi
+#   - or -
+#   pip install -r requirements.txt
+#
+# The server exposes three tools via stdio transport:
+#   inspect_faba_bounties    -- open bounty/build issues from GitHub
+#   get_protocol_state       -- live SQLite treasury fees and agent count
+#   generate_eip191_template -- pre-filled EIP-191 signing template + steps
+
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    properties: {}
+    required: []
+  commandFunction: |-
+    (_config) => ({
+      command: "python",
+      args: ["mcp/faba_server.py"]
+    })
