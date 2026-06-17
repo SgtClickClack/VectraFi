@@ -12,3 +12,8 @@
 {"ts": "2026-06-17T08:38:25.584912+00:00", "event": "loop_start", "tokens": 0, "elapsed_ms": 0.0}
 {"ts": "2026-06-17T08:38:26.246343+00:00", "event": "validate:token_lease.py", "tokens": 0, "elapsed_ms": 671.0}
 {"ts": "2026-06-17T08:38:26.249334+00:00", "event": "loop_stop", "tokens": 0, "elapsed_ms": 0.0}
+{"ts": "2026-06-17T08:46:15.415939+00:00", "event": "loop_start", "tokens": 0, "elapsed_ms": 0.0}
+{"ts": "2026-06-17T08:46:16.238039+00:00", "event": "validate:liquidity_pooler.py", "tokens": 0, "elapsed_ms": 813.0}
+{"ts": "2026-06-17T08:46:16.240142+00:00", "event": "tick", "tokens": 0, "elapsed_ms": 813.0}
+{"ts": "2026-06-17T08:46:17.241289+00:00", "event": "tick", "tokens": 0, "elapsed_ms": 0.0}
+{"ts": "2026-06-17T08:46:17.242384+00:00", "event": "loop_stop", "tokens": 0, "elapsed_ms": 0.0}

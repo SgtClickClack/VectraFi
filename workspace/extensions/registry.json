@@ -6,6 +6,13 @@
       "registered_at": "2026-06-17T08:38:26.249334+00:00",
       "status": "pending_human_review",
       "validated_reason": "ok"
+    },
+    {
+      "name": "liquidity_pooler",
+      "path": "validated\\liquidity_pooler.py",
+      "registered_at": "2026-06-17T08:46:16.240142+00:00",
+      "status": "pending_human_review",
+      "validated_reason": "ok"
     }
   ]
 }
