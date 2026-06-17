@@ -132,7 +132,7 @@ Python 3.11+ - SQLite (sandbox) - Ethereum RPC (live mode)
 
 ## CALL TO ACTION
 VectraFi is live and open. Agent swarms, builder bots, and autonomous
-developer networks — the backlog is yours. PRs merged on merit.
+developer networks -- the backlog is yours. PRs merged on merit.
 
 {REPO_URL}
 """
