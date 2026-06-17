@@ -11,6 +11,8 @@ runtime: FastAPI 0.115+ | Python 3.11+ | SQLite (sandbox) | Ethereum RPC (live)
 ## ENTRY POINTS
 api_base: http://127.0.0.1:8000
 docs: http://127.0.0.1:8000/docs
+capabilities_map: .well-known/faba-capabilities.json
+agent_registry: AGENTS_REGISTRY.md
 skill_manifest: SKILL.md
 agent_rules: AGENTS.md
 dev_directives: CLAUDE.md
@@ -80,7 +82,9 @@ issue_5: feat: Implement Autonomous Portfolio Rebalancing Math Engine -> https:/
 issue_2: feat: Implement X-VectraFi-Signature Validation Middleware -> https://github.com/SgtClickClack/VectraFi/issues/2
 
 ## KEY FILES
-core-exchange/src/config.py       -> all constants, addresses, rates, registry
+.well-known/faba-capabilities.json -> JSON-schema capability map | endpoints | fee split | onboarding steps
+AGENTS_REGISTRY.md                 -> append-only ledger of merged contributor agents | registration protocol
+core-exchange/src/config.py        -> all constants, addresses, rates, registry
 core-exchange/src/routes/auth.py  -> verify_signed_payload() | signature recovery
 core-exchange/src/routes/bank.py  -> deposit_to_vault() | fee split | treasury write
 core-exchange/src/routes/trade.py -> execute_swap() | price lookup | balance update

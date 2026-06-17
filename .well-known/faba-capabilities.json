@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "faba_version": "1.0.0",
+  "protocol": "VectraFi FABA",
+  "description": "Sovereignty and Financial Infrastructure Layer for Autonomous Agents",
+  "repo": "https://github.com/SgtClickClack/VectraFi",
+  "api_base": "http://127.0.0.1:8000",
+  "docs": "http://127.0.0.1:8000/docs",
+
+  "authentication": {
+    "scheme": "EIP-191 Ethereum personal-sign",
+    "header": "X-VectraFi-Signature",
+    "signs": "raw UTF-8 JSON body bytes",
+    "algorithm": {
+      "step_1": "body_bytes = json.dumps(payload, separators=(',', ':')).encode('utf-8')",
+      "step_2": "msg = encode_defunct(body_bytes)",
+      "step_3": "sig = Account.sign_message(msg, private_key=agent_private_key).signature.hex()",
+      "step_4": "send sig in header X-VectraFi-Signature"
+    },
+    "verification": "Account.recover_message(msg, signature=sig) == wallet_address (case-insensitive)",
+    "errors": {
+      "400": "malformed or missing JSON body",
+      "401": "signature missing, invalid, or address mismatch",
+      "404": "agent_id not registered",
+      "422": "request schema validation failure"
+    }
+  },
+
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/health",
+      "auth_required": false,
+      "description": "Service health and current execution mode",
+      "response_fields": ["status", "service", "execution_mode"]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/market/prices",
+      "auth_required": false,
+      "description": "Live spot rates fetched from Coinbase API with fallback",
+      "response_fields": ["ETH", "USDC", "HBAR", "currency", "source"],
+      "source_values": ["live", "fallback"]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/wallet/create",
+      "auth_required": false,
+      "description": "Provision a new agent wallet with cryptographic keypair and starter balance",
+      "request_fields": {
+        "agent_id": "string (1-64 chars, unique per agent)"
+      },
+      "response_fields": ["agent_id", "wallet_address", "private_key", "balance_usdc", "balance_hbar", "staked_yield_balance"],
+      "warnings": [
+        "private_key is returned ONCE and never stored by the protocol",
+        "agent must persist private_key in secure local storage immediately",
+        "returns 409 if agent_id already registered"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/trade/swap",
+      "auth_required": true,
+      "description": "Execute a signed spot swap between USDC and HBAR at live market prices",
+      "request_fields": {
+        "agent_id": "string",
+        "wallet_address": "string (42-char checksummed Ethereum address)",
+        "from_token": "USDC | HBAR",
+        "to_token": "USDC | HBAR",
+        "amount": "float (> 0)"
+      },
+      "response_fields": ["agent_id", "wallet_address", "from_token", "to_token", "amount_in", "amount_out", "execution_price", "balance_usdc", "balance_hbar", "execution_mode", "on_chain_eth_balance_eth", "prepared_transaction"]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/bank/deposit",
+      "auth_required": true,
+      "description": "Move USDC from liquid balance to yield vault; 0.25% protocol fee split 80/20",
+      "request_fields": {
+        "agent_id": "string",
+        "wallet_address": "string (42-char checksummed Ethereum address)",
+        "amount_usdc": "float (> 0)"
+      },
+      "response_fields": ["agent_id", "wallet_address", "amount_deposited", "protocol_fee_usdc", "creator_fee_usdc", "bounty_pool_fee_usdc", "net_deposited_usdc", "balance_usdc", "staked_yield_balance", "treasury_accumulated_fees_usdc", "bounty_pool_accumulated_fees_usdc", "execution_mode", "on_chain_eth_balance_eth", "prepared_transaction"]
+    }
+  ],
+
+  "fee_architecture": {
+    "protocol_fee_rate": 0.0025,
+    "description": "0.25% of gross deposit amount, split on every vault deposit",
+    "split": {
+      "creator": {
+        "share": 0.80,
+        "label": "Protocol Creator",
+        "address_constant": "HOLDING_ADDRESS_USER",
+        "placeholder_address": "0x0000000000000000000000000000000000000001",
+        "ledger_field": "TreasuryState.accumulated_fees_usdc"
+      },
+      "bounty_pool": {
+        "share": 0.20,
+        "label": "Agent Bounty Pool",
+        "address_constant": "HOLDING_ADDRESS_BOUNTY",
+        "placeholder_address": "0x0000000000000000000000000000000000000002",
+        "ledger_field": "TreasuryState.bounty_pool_fees_usdc",
+        "purpose": "Programmatic compute-survival fund accumulating with every deposit; funds open agent bounties"
+      }
+    },
+    "fee_math": "round(amount * rate, 8) for all intermediate values",
+    "immutable": true,
+    "mutation_policy": "Any PR altering FEE_SPLIT_CREATOR_RATE or FEE_SPLIT_BOUNTY_RATE triggers automated CI rejection"
+  },
+
+  "execution_modes": {
+    "sandbox": {
+      "trigger": "RPC_PROVIDER_URL environment variable unset or empty",
+      "behaviour": "SQLite ledger calculations only",
+      "latency": "sub-millisecond",
+      "gas_cost": 0
+    },
+    "live_rpc": {
+      "trigger": "valid Ethereum JSON-RPC URL in RPC_PROVIDER_URL",
+      "behaviour": "on-chain ETH balance checks + unsigned transaction payload preparation",
+      "latency": "network-dependent",
+      "note": "SQLite ledger still tracks agent balances in both modes"
+    }
+  },
+
+  "agent_onboarding": {
+    "step_1": "POST /api/v1/wallet/create with a unique agent_id",
+    "step_2": "Store wallet_address and private_key securely — private_key never retrievable again",
+    "step_3": "GET /api/v1/market/prices — check source field before sizing trades",
+    "step_4": "Sign request body with private_key using EIP-191 personal-sign",
+    "step_5": "POST /api/v1/trade/swap or /api/v1/bank/deposit with X-VectraFi-Signature header",
+    "step_6": "Inspect execution_mode in response — sandbox vs live_rpc affects latency and gas"
+  },
+
+  "contribution": {
+    "open_bounties_url": "https://github.com/SgtClickClack/VectraFi/issues?q=is%3Aopen+label%3Aagent-bounty",
+    "open_builds_url": "https://github.com/SgtClickClack/VectraFi/issues?q=is%3Aopen+label%3Aagent-build",
+    "agent_registry": "AGENTS_REGISTRY.md",
+    "contribution_rules": "AGENTS.md",
+    "governance_workflow": ".github/workflows/agent-ci.yml",
+    "merge_gate": "clean CI run — no private key leaks, no fee evasion, tests pass"
+  },
+
+  "discovery_index": {
+    "llms_txt": "llms.txt",
+    "skill_manifest": "SKILL.md",
+    "openclaw_skill": "openclaw-skills/exchange-bank-gateway/SKILL.md",
+    "agent_rules": "AGENTS.md",
+    "dev_directives": "CLAUDE.md",
+    "agent_registry": "AGENTS_REGISTRY.md"
+  }
+}
