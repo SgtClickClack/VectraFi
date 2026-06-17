@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VectraFi — Live Telemetry</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #080d18;
+      --surface:   #0f1629;
+      --border:    #1e2d4a;
+      --accent:    #0ea5e9;
+      --purple:    #8b5cf6;
+      --green:     #10b981;
+      --amber:     #f59e0b;
+      --red:       #ef4444;
+      --muted:     #64748b;
+      --text:      #e2e8f0;
+      --text-dim:  #94a3b8;
+      --radius:    10px;
+      --pulse-ms:  2500;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+      font-size: 14px;
+      min-height: 100vh;
+    }
+
+    /* ── TOPBAR ── */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 28px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+    }
+
+    .logo svg { flex-shrink: 0; }
+
+    .logo span.v { color: var(--accent); }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 10px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+
+    .badge-live {
+      background: rgba(16,185,129,.15);
+      color: var(--green);
+      border: 1px solid rgba(16,185,129,.35);
+    }
+
+    .badge-syncing {
+      background: rgba(245,158,11,.12);
+      color: var(--amber);
+      border: 1px solid rgba(245,158,11,.35);
+    }
+
+    .badge-error {
+      background: rgba(239,68,68,.12);
+      color: var(--red);
+      border: 1px solid rgba(239,68,68,.35);
+    }
+
+    .badge .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .badge-live .dot { animation: pulse-dot 1.4s ease-in-out infinite; }
+
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.3; }
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+    }
+
+    .last-updated {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    /* ── MAIN GRID ── */
+    main {
+      padding: 24px 28px 32px;
+      display: grid;
+      gap: 20px;
+    }
+
+    .top-panels {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+
+    @media (max-width: 760px) {
+      .top-panels { grid-template-columns: 1fr; }
+    }
+
+    /* ── PANEL ── */
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 18px 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .panel-title {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--text-dim);
+    }
+
+    .panel-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 7px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+    }
+
+    .icon-treasury { background: rgba(14,165,233,.15); }
+    .icon-network  { background: rgba(139,92,246,.15); }
+    .icon-ledger   { background: rgba(16,185,129,.15); }
+
+    .panel-body { padding: 18px; }
+
+    /* ── STAT BLOCKS ── */
+    .stat-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+
+    .stat {
+      background: rgba(255,255,255,.03);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+
+    .stat-label {
+      font-size: 11px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      margin-bottom: 8px;
+    }
+
+    .stat-value {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      line-height: 1;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .stat-value.accent  { color: var(--accent); }
+    .stat-value.purple  { color: var(--purple); }
+    .stat-value.green   { color: var(--green); }
+    .stat-value.amber   { color: var(--amber); }
+
+    .stat-sub {
+      margin-top: 4px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    /* Skeleton shimmer for loading state */
+    .skeleton {
+      border-radius: 4px;
+      background: linear-gradient(90deg,
+        var(--border) 25%,
+        rgba(255,255,255,.06) 50%,
+        var(--border) 75%);
+      background-size: 300% 100%;
+      animation: shimmer 1.6s infinite;
+      height: 28px;
+      width: 80%;
+    }
+
+    @keyframes shimmer {
+      0%   { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+
+    /* ── LIVE LEDGER ── */
+    .ledger-outer {
+      overflow-x: auto;
+      padding: 0;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    thead th {
+      padding: 10px 14px;
+      text-align: left;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--muted);
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+
+    tbody tr {
+      border-bottom: 1px solid rgba(255,255,255,.04);
+      transition: background 0.15s;
+    }
+
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: rgba(255,255,255,.03); }
+
+    tbody td {
+      padding: 11px 14px;
+      color: var(--text-dim);
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
+    tbody td.mono {
+      font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', monospace;
+      font-size: 12px;
+    }
+
+    td .agent-id {
+      color: var(--text);
+      max-width: 160px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: inline-block;
+      vertical-align: middle;
+    }
+
+    .pill {
+      display: inline-block;
+      padding: 2px 9px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+
+    .pill-confirmed   { background: rgba(16,185,129,.15);  color: var(--green); }
+    .pill-confirming  { background: rgba(14,165,233,.15);  color: var(--accent); }
+    .pill-pending     { background: rgba(245,158,11,.15);  color: var(--amber); }
+    .pill-failed      { background: rgba(239,68,68,.15);   color: var(--red); }
+    .pill-sandbox     { background: rgba(139,92,246,.15);  color: var(--purple); }
+    .pill-unknown     { background: rgba(100,116,139,.15); color: var(--muted); }
+
+    .empty-row td {
+      text-align: center;
+      padding: 36px;
+      color: var(--muted);
+      font-style: italic;
+    }
+
+    /* ── CONNECTING OVERLAY ── */
+    .connect-state {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 20px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .spinner {
+      width: 16px;
+      height: 16px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.75s linear infinite;
+      flex-shrink: 0;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    /* ── REFRESH BAR ── */
+    .refresh-bar {
+      height: 2px;
+      background: var(--border);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .refresh-bar::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: var(--accent);
+      transform: scaleX(0);
+      transform-origin: left;
+      animation: refill calc(var(--pulse-ms) * 1ms) linear infinite;
+    }
+
+    @keyframes refill {
+      0%   { transform: scaleX(0); }
+      90%  { transform: scaleX(1); }
+      100% { transform: scaleX(1); opacity: 0; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <svg width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="28" height="28" rx="7" fill="rgba(14,165,233,0.15)"/>
+      <path d="M7 9l7 10 7-10" stroke="#0ea5e9" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M7 14l7 5 7-5" stroke="#8b5cf6" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" opacity=".7"/>
+    </svg>
+    <span><span class="v">Vectra</span>Fi</span>
+  </div>
+  <div class="header-right">
+    <span class="last-updated" id="last-updated">Initialising…</span>
+    <span class="badge badge-syncing" id="status-badge">
+      <span class="dot"></span>
+      <span id="status-text">Connecting</span>
+    </span>
+  </div>
+</header>
+
+<div class="refresh-bar"></div>
+
+<main>
+  <div class="top-panels">
+
+    <!-- VAULT & TREASURY PANEL -->
+    <div class="panel" id="panel-treasury">
+      <div class="panel-header">
+        <span class="panel-title">Vault &amp; Treasury</span>
+        <div class="panel-icon icon-treasury">&#x1F4B0;</div>
+      </div>
+      <div class="panel-body">
+        <div id="treasury-body" class="connect-state">
+          <div class="spinner"></div>
+          RPC Syncing / Connecting…
+        </div>
+      </div>
+    </div>
+
+    <!-- NETWORK HEALTH PANEL -->
+    <div class="panel" id="panel-network">
+      <div class="panel-header">
+        <span class="panel-title">Network Health</span>
+        <div class="panel-icon icon-network">&#x26A1;</div>
+      </div>
+      <div class="panel-body">
+        <div id="network-body" class="connect-state">
+          <div class="spinner"></div>
+          RPC Syncing / Connecting…
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- LIVE LEDGER GRID -->
+  <div class="panel">
+    <div class="panel-header">
+      <span class="panel-title">Live Settlement Ledger</span>
+      <div class="panel-icon icon-ledger">&#x1F4CB;</div>
+    </div>
+    <div class="ledger-outer">
+      <table>
+        <thead>
+          <tr>
+            <th>TX ID</th>
+            <th>Sender</th>
+            <th>Receiver</th>
+            <th>Type</th>
+            <th>Gross (USDC)</th>
+            <th>Tax (USDC)</th>
+            <th>Net (USDC)</th>
+            <th>Chain Status</th>
+            <th>Time</th>
+          </tr>
+        </thead>
+        <tbody id="ledger-body">
+          <tr class="empty-row">
+            <td colspan="9">
+              <div class="connect-state">
+                <div class="spinner"></div>
+                RPC Syncing / Connecting…
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</main>
+
+<script>
+  'use strict';
+
+  const POLL_MS   = 2500;
+  const API_BASE  = '';   // same origin
+
+  const $ = id => document.getElementById(id);
+
+  // ── Formatters ──────────────────────────────────────────────────────────────
+
+  const fmtUSDC = n =>
+    (typeof n === 'number' ? n : 0).toLocaleString('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 6,
+    });
+
+  const fmtNum = n => (typeof n === 'number' ? n : 0).toLocaleString('en-US');
+
+  const fmtMs = ms =>
+    typeof ms === 'number' ? ms.toFixed(2) + ' ms' : '—';
+
+  const fmtTime = ts => {
+    if (!ts) return '—';
+    try {
+      const d = new Date(typeof ts === 'number' && ts < 1e12 ? ts * 1000 : ts);
+      return d.toLocaleTimeString('en-US', { hour12: false });
+    } catch { return String(ts); }
+  };
+
+  const fmtTxId = id =>
+    typeof id === 'string' && id.length > 12
+      ? id.slice(0, 6) + '…' + id.slice(-4)
+      : (id || '—');
+
+  // ── Status badge ──────────────────────────────────────────────────────────
+
+  let _lastOk = false;
+
+  function setStatusOk(ok) {
+    const badge = $('status-badge');
+    const text  = $('status-text');
+    if (ok === _lastOk) return;
+    _lastOk = ok;
+    badge.className = 'badge ' + (ok ? 'badge-live' : 'badge-error');
+    text.textContent = ok ? 'Live' : 'Error';
+  }
+
+  function setLastUpdated() {
+    $('last-updated').textContent =
+      'Updated ' + new Date().toLocaleTimeString('en-US', { hour12: false });
+  }
+
+  // ── Treasury panel ────────────────────────────────────────────────────────
+
+  function renderTreasury(data) {
+    $('treasury-body').innerHTML = `
+      <div class="stat-grid">
+        <div class="stat">
+          <div class="stat-label">Accumulated Fees</div>
+          <div class="stat-value accent">$${fmtUSDC(data.accumulated_fees_usdc)}</div>
+          <div class="stat-sub">USDC protocol fees</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Total Volume Settled</div>
+          <div class="stat-value green">$${fmtUSDC(data.total_volume_processed_usdc)}</div>
+          <div class="stat-sub">Gross USDC processed</div>
+        </div>
+      </div>`;
+  }
+
+  function renderTreasuryConnecting() {
+    $('treasury-body').innerHTML =
+      '<div class="connect-state"><div class="spinner"></div>RPC Syncing / Connecting…</div>';
+  }
+
+  // ── Network health panel ──────────────────────────────────────────────────
+
+  function renderNetwork(data) {
+    $('network-body').innerHTML = `
+      <div class="stat-grid">
+        <div class="stat">
+          <div class="stat-label">Transactions</div>
+          <div class="stat-value purple">${fmtNum(data.total_transactions_processed)}</div>
+          <div class="stat-sub">settlements processed</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Active Wallets</div>
+          <div class="stat-value accent">${fmtNum(data.active_wallets_count)}</div>
+          <div class="stat-sub">registered agents</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Avg Latency</div>
+          <div class="stat-value${data.avg_latency_ms > 500 ? ' amber' : ' green'}">${fmtMs(data.avg_latency_ms)}</div>
+          <div class="stat-sub">rolling 200-req window</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Success Rate</div>
+          <div class="stat-value green">${(data.success_rate_pct ?? 100).toFixed(1)}%</div>
+          <div class="stat-sub">no failures recorded</div>
+        </div>
+      </div>`;
+  }
+
+  function renderNetworkConnecting() {
+    $('network-body').innerHTML =
+      '<div class="connect-state"><div class="spinner"></div>RPC Syncing / Connecting…</div>';
+  }
+
+  // ── Ledger grid ───────────────────────────────────────────────────────────
+
+  function statusPill(s) {
+    if (!s) return '<span class="pill pill-sandbox">Sandbox</span>';
+    const cls = {
+      CONFIRMED:    'pill-confirmed',
+      CONFIRMING:   'pill-confirming',
+      PENDING_SYNC: 'pill-pending',
+      FAILED:       'pill-failed',
+    }[s.toUpperCase()] || 'pill-unknown';
+    return `<span class="pill ${cls}">${s}</span>`;
+  }
+
+  function renderLedger(rows) {
+    const tbody = $('ledger-body');
+    if (!rows || rows.length === 0) {
+      tbody.innerHTML = `
+        <tr class="empty-row">
+          <td colspan="9">No settlement transactions yet — ledger is empty.</td>
+        </tr>`;
+      return;
+    }
+    tbody.innerHTML = rows.map(r => `
+      <tr>
+        <td class="mono">${fmtTxId(r.tx_id)}</td>
+        <td><span class="agent-id" title="${r.sender_id}">${r.sender_id}</span></td>
+        <td><span class="agent-id" title="${r.receiver_id}">${r.receiver_id}</span></td>
+        <td><span class="pill pill-sandbox" style="background:rgba(14,165,233,.1);color:var(--accent)">${r.tx_type || '—'}</span></td>
+        <td class="mono">$${fmtUSDC(r.gross_amount_usdc)}</td>
+        <td class="mono" style="color:var(--amber)">$${fmtUSDC(r.tax_amount_usdc)}</td>
+        <td class="mono" style="color:var(--green)">$${fmtUSDC(r.net_amount_usdc)}</td>
+        <td>${statusPill(r.on_chain_status)}</td>
+        <td style="color:var(--muted)">${fmtTime(r.created_at)}</td>
+      </tr>`).join('');
+  }
+
+  function renderLedgerConnecting() {
+    $('ledger-body').innerHTML = `
+      <tr class="empty-row">
+        <td colspan="9">
+          <div class="connect-state"><div class="spinner"></div>RPC Syncing / Connecting…</div>
+        </td>
+      </tr>`;
+  }
+
+  // ── Fetch helpers ─────────────────────────────────────────────────────────
+
+  async function fetchJSON(path) {
+    const r = await fetch(API_BASE + path, {
+      headers: { 'Accept': 'application/json' },
+      signal: AbortSignal.timeout(4000),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json();
+  }
+
+  // ── Main poll cycle ───────────────────────────────────────────────────────
+
+  let _firstPoll = true;
+
+  async function poll() {
+    try {
+      const [treasury, stats, txns] = await Promise.all([
+        fetchJSON('/api/v1/analytics/treasury'),
+        fetchJSON('/api/v1/analytics/stats'),
+        fetchJSON('/api/v1/analytics/recent-transactions'),
+      ]);
+
+      renderTreasury(treasury);
+      renderNetwork(stats);
+      renderLedger(txns);
+      setStatusOk(true);
+      setLastUpdated();
+      _firstPoll = false;
+    } catch (err) {
+      console.warn('[VectraFi dashboard] poll error:', err.message);
+      if (_firstPoll) {
+        renderTreasuryConnecting();
+        renderNetworkConnecting();
+        renderLedgerConnecting();
+      }
+      setStatusOk(false);
+      $('last-updated').textContent = 'Last attempt: ' +
+        new Date().toLocaleTimeString('en-US', { hour12: false });
+    }
+  }
+
+  // ── Boot ──────────────────────────────────────────────────────────────────
+
+  poll();
+  setInterval(poll, POLL_MS);
+</script>
+</body>
+</html>

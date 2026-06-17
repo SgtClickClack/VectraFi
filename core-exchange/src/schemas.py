@@ -173,5 +173,83 @@ class TreasuryAnalyticsResponse(BaseModel):
     active_wallets_count: int
 
 
+class AnalyticsStatsResponse(BaseModel):
+    total_transactions_processed: int
+    total_volume_processed_usdc: float
+    active_wallets_count: int
+    success_rate_pct: float
+    failure_count: int
+    avg_latency_ms: float
+
+
+class AnalyticsTreasuryResponse(BaseModel):
+    accumulated_fees_usdc: float
+    total_volume_processed_usdc: float
+
+
+class RecentTransactionItem(BaseModel):
+    tx_id: str
+    sender_id: str
+    receiver_id: str
+    gross_amount_usdc: float
+    tax_amount_usdc: float
+    net_amount_usdc: float
+    tx_type: str
+    created_at: int
+    on_chain_status: str | None = None
+
+
 class ErrorResponse(BaseModel):
     detail: str
+
+
+# ---------------------------------------------------------------------------
+# Arbitrage router schemas
+# ---------------------------------------------------------------------------
+
+class ArbitrageRouteRequest(BaseModel):
+    entry_asset: Literal["USDC", "HBAR"]
+    exit_asset: Literal["USDC", "HBAR"]
+    volume_usdc: float = Field(..., gt=0, description="Total arbitrage volume in USDC")
+    agent_chain: list[str] = Field(
+        ...,
+        min_length=1,
+        max_length=10,
+        description="Ordered sequence of agent_ids forming the routing path",
+    )
+    slippage_tolerance_pct: float = Field(
+        default=0.005,
+        ge=0.0,
+        le=0.10,
+        description="Maximum acceptable slippage as a fraction (0.005 = 0.5%)",
+    )
+
+    @field_validator("agent_chain")
+    @classmethod
+    def _no_blank_ids(cls, v: list[str]) -> list[str]:
+        if any(not aid.strip() for aid in v):
+            raise ValueError("agent_chain entries must be non-empty strings")
+        return v
+
+
+class ArbitrageStepResult(BaseModel):
+    step: int
+    agent_id: str
+    balance_usdc: float
+    slippage_floor_usdc: float
+    balance_sufficient: bool
+    pending_sync_blocked: bool
+    wallet_found: bool
+
+
+class ArbitrageRouteResponse(BaseModel):
+    viable: bool
+    entry_asset: str
+    exit_asset: str
+    volume_usdc: float
+    agent_chain: list[str]
+    slippage_tolerance_pct: float
+    steps: list[ArbitrageStepResult]
+    total_slippage_usdc: float
+    expected_output_usdc: float
+    rejection_reason: str | None = None

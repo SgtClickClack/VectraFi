@@ -14,6 +14,7 @@ Artifact lifecycle:
   workspace/extensions/  → registry of approved (human-reviewed) extensions
 """
 
+import ast
 import json
 import subprocess
 import sys
@@ -46,13 +47,102 @@ _MCP_READ_ENDPOINTS = [
 
 
 def _enforce_sandbox(path: Path) -> Path:
-    """Raise if path escapes the workspace sandbox."""
+    """Raise if path escapes the workspace sandbox (F-09: uses is_relative_to, not startswith)."""
     resolved = path.resolve()
-    if not str(resolved).startswith(str(_ALLOWED_WRITE_ROOT)):
+    if not resolved.is_relative_to(_ALLOWED_WRITE_ROOT):
         raise PermissionError(
             f"Write denied: {resolved} is outside sandbox {_ALLOWED_WRITE_ROOT}"
         )
     return resolved
+
+
+# ---------------------------------------------------------------------------
+# F-01: AST pre-scan for companion test files
+# ---------------------------------------------------------------------------
+
+# Modules that must never appear in a test file — any import of these is a
+# potential sandbox-escape vector (file I/O, subprocesses, dynamic code exec).
+_FORBIDDEN_MODULES: frozenset[str] = frozenset({
+    "os", "sys", "pathlib", "subprocess", "importlib", "shutil", "socket",
+    "ctypes", "struct", "pickle", "io", "tempfile", "builtins",
+    "threading", "multiprocessing", "signal", "pty", "pexpect",
+    "asyncio", "concurrent", "runpy", "zipimport",
+})
+
+# Builtin names that execute arbitrary code or open file descriptors.
+_FORBIDDEN_BUILTINS: frozenset[str] = frozenset({
+    "exec", "eval", "compile", "__import__", "open", "breakpoint",
+})
+
+# Method names that perform file-write or filesystem mutation.
+_FORBIDDEN_WRITE_METHODS: frozenset[str] = frozenset({
+    "write_text", "write_bytes", "write", "rename", "replace",
+    "unlink", "rmdir", "mkdir", "makedirs", "remove", "symlink",
+})
+
+
+def _scan_test_ast(test_path: Path) -> tuple[bool, str]:
+    """
+    AST-walk a companion *_test.py before handing it to pytest.
+
+    Blocks:
+    1. Forbidden module imports (os, sys, pathlib, subprocess, …).
+    2. Calls to dangerous builtins (exec, eval, open, compile, __import__).
+    3. Calls to file-write attribute methods (write_text, write_bytes, …).
+    4. Module-level statements that aren't definitions, imports, or docstrings
+       — prevents hidden side-effect code running at import time.
+
+    Returns (True, "ok") or (False, reason_string).
+    """
+    try:
+        src = test_path.read_text(encoding="utf-8")
+        tree = ast.parse(src, filename=str(test_path))
+    except SyntaxError as exc:
+        return False, f"Syntax error in test file: {exc}"
+
+    for node in ast.walk(tree):
+        # --- Rule 1: no forbidden imports ---
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                root = alias.name.split(".")[0]
+                if root in _FORBIDDEN_MODULES:
+                    return False, f"Forbidden import '{alias.name}' in test file"
+        if isinstance(node, ast.ImportFrom):
+            root = (node.module or "").split(".")[0]
+            if root in _FORBIDDEN_MODULES:
+                return False, f"Forbidden 'from {node.module} import …' in test file"
+
+        # --- Rule 2: no dangerous builtin calls ---
+        if isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Name) and func.id in _FORBIDDEN_BUILTINS:
+                return False, f"Forbidden call to '{func.id}()' in test file"
+            # --- Rule 3: no file-write attribute calls ---
+            if isinstance(func, ast.Attribute) and func.attr in _FORBIDDEN_WRITE_METHODS:
+                return False, f"Forbidden method call '.{func.attr}()' in test file"
+
+    # --- Rule 4: module-level statements must be definitions / imports / docstrings ---
+    for stmt in tree.body:
+        if isinstance(stmt, ast.Expr):
+            # Allow string-literal docstrings; block everything else (side-effect calls)
+            if not isinstance(stmt.value, ast.Constant):
+                return False, (
+                    "Module-level expression with side effects detected in test file "
+                    f"(line {stmt.lineno})"
+                )
+        elif not isinstance(stmt, (
+            ast.FunctionDef, ast.AsyncFunctionDef,
+            ast.ClassDef,
+            ast.Import, ast.ImportFrom,
+            ast.Assign, ast.AnnAssign,
+            ast.If,   # allow `if TYPE_CHECKING:` / `if __name__ == "__main__":` guards
+        )):
+            return False, (
+                f"Disallowed module-level statement '{type(stmt).__name__}' "
+                f"at line {stmt.lineno} in test file"
+            )
+
+    return True, "ok"
 
 
 def _bootstrap_dirs() -> None:
@@ -144,9 +234,21 @@ def validate_artifact(artifact_path: Path) -> tuple[bool, str]:
         except SyntaxError as e:
             return False, f"Syntax error: {e}"
 
-    # Run companion test file if present
+    # Run companion test file if present — AST scan MUST pass before pytest executes
     test_file = artifact_path.parent / f"{artifact_path.stem}_test.py"
     if test_file.exists():
+        # F-01: enforce sandbox boundary on the test file itself
+        try:
+            _enforce_sandbox(test_file)
+        except PermissionError as exc:
+            return False, f"Test file sandbox violation: {exc}"
+
+        # F-01: AST scan before any code execution — pytest imports the module
+        # at collection time, so unsafe module-level code runs without this gate.
+        ast_ok, ast_reason = _scan_test_ast(test_file)
+        if not ast_ok:
+            return False, f"Test file blocked by AST scanner: {ast_reason}"
+
         result = subprocess.run(
             [sys.executable, "-m", "pytest", str(test_file), "-q", "--tb=short"],
             capture_output=True,

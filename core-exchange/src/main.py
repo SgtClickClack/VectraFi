@@ -1,11 +1,17 @@
 import logging
 import sys
 import time
+from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
+
+_TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 
 from database import init_db
+from routes.analytics import record_latency
+from routes.analytics import router as analytics_router
+from routes.arbitrage import router as arbitrage_router
 from routes.bank import router as bank_router
 from routes.market import router as market_router
 from routes.settlement import router as settlement_router
@@ -37,6 +43,8 @@ app = FastAPI(
     version="0.3.0",
 )
 
+app.include_router(analytics_router)
+app.include_router(arbitrage_router)
 app.include_router(market_router)
 app.include_router(wallet_router)
 app.include_router(trade_router)
@@ -49,6 +57,7 @@ async def log_requests(request: Request, call_next):
     start = time.perf_counter()
     response = await call_next(request)
     elapsed_ms = (time.perf_counter() - start) * 1000
+    record_latency(elapsed_ms)
     logger.info(
         "%s %s -> %s (%.2fms)",
         request.method,
@@ -64,6 +73,11 @@ def on_startup() -> None:
     init_db()
     mode = "live_rpc" if is_live_mode() else "sandbox"
     logger.info("VectraFi core exchange started — mode=%s SQLite backend ready", mode)
+
+
+@app.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
+def dashboard() -> HTMLResponse:
+    return HTMLResponse((_TEMPLATES_DIR / "index.html").read_text(encoding="utf-8"))
 
 
 @app.get("/health")

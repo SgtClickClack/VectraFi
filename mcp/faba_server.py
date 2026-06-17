@@ -2,7 +2,7 @@
 """
 VectraFi FABA MCP Server
 ========================
-Exposes three protocol tools to external agent runtimes via the Model Context Protocol.
+Exposes eight protocol tools to external agent runtimes via the Model Context Protocol.
 
 Add to your mcp_config.json:
     {
@@ -541,6 +541,148 @@ def get_treasury_telemetry() -> str:
         }, indent=2)
     except Exception as exc:
         return json.dumps({"status": "error", "detail": str(exc)}, indent=2)
+
+
+@mcp.tool()
+async def simulate_arbitrage_path(
+    entry_asset: Annotated[str, "Entry asset for the route: 'USDC' or 'HBAR'"],
+    exit_asset: Annotated[str, "Exit asset for the route: 'USDC' or 'HBAR'"],
+    volume_usdc: Annotated[float, "Total arbitrage volume in USDC (float > 0)"],
+    agent_chain: Annotated[str, "Ordered agent IDs forming the routing path — JSON array or comma-separated string (1–10 entries, e.g. 'agent-zero,agent-one' or '[\"agent-zero\",\"agent-one\"]')"],
+) -> str:
+    """
+    Performs a dry-run viability simulation for a proposed cross-agent arbitrage path.
+
+    Hits POST /api/v1/arbitrage/route-path on the local exchange server and returns
+    a structured text report covering:
+    - Overall path viability (VIABLE / NOT VIABLE)
+    - Total slippage cost and expected net output in USDC
+    - Per-hop status: wallet registration, balance sufficiency, and PENDING_SYNC blocks
+    - First rejection reason if the path is blocked
+
+    No funds are moved — the simulation is a fully isolated savepoint dry-run.
+
+    agent_chain accepts either a JSON array string ('[\"agent-zero\",\"agent-one\"]')
+    or a comma-separated string ('agent-zero,agent-one') for text-based MCP boundaries.
+
+    Requires the exchange server to be running (cd core-exchange/src && python run.py).
+    """
+    # Parse agent_chain: accept JSON array or comma-separated string
+    chain: list[str]
+    stripped = agent_chain.strip()
+    if stripped.startswith("["):
+        try:
+            chain = json.loads(stripped)
+            if not isinstance(chain, list):
+                raise ValueError("expected a JSON array")
+        except (json.JSONDecodeError, ValueError) as exc:
+            return json.dumps({"status": "error", "detail": f"agent_chain JSON parse failed: {exc}"}, indent=2)
+    else:
+        chain = [a.strip() for a in stripped.split(",") if a.strip()]
+
+    if not chain:
+        return json.dumps({
+            "status": "error",
+            "detail": "agent_chain must contain at least one agent ID",
+        }, indent=2)
+
+    payload = {
+        "entry_asset": entry_asset,
+        "exit_asset": exit_asset,
+        "volume_usdc": volume_usdc,
+        "agent_chain": chain,
+    }
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=3.0, read=10.0, write=3.0, pool=3.0)
+        ) as client:
+            resp = await client.post(
+                f"{_API_BASE}/api/v1/arbitrage/route-path",
+                json=payload,
+            )
+
+        if resp.status_code == 422:
+            detail = resp.json().get("detail", resp.text)
+            return json.dumps({
+                "status": "validation_error",
+                "detail": detail,
+                "hint": (
+                    "Check that entry_asset/exit_asset are 'USDC' or 'HBAR', "
+                    "volume_usdc > 0, and agent_chain has 1–10 non-empty IDs."
+                ),
+            }, indent=2)
+
+        resp.raise_for_status()
+        data = resp.json()
+
+    except httpx.ConnectError:
+        return json.dumps({
+            "status": "exchange_offline",
+            "message": (
+                "Cannot reach exchange server at http://127.0.0.1:8000. "
+                "Start it with: cd core-exchange/src && python run.py"
+            ),
+        }, indent=2)
+    except httpx.TimeoutException:
+        return json.dumps({
+            "status": "timeout",
+            "message": "Arbitrage simulation timed out — exchange server may be overloaded.",
+        }, indent=2)
+    except Exception as exc:
+        return json.dumps({"status": "error", "detail": str(exc)}, indent=2)
+
+    # Build a structured text report
+    viable = data.get("viable", False)
+    status_line = "VIABLE" if viable else "NOT VIABLE"
+    rejection = data.get("rejection_reason") or "none"
+    hop_count = len(data.get("steps", []))
+    chain_display = " → ".join(data.get("agent_chain", chain))
+
+    lines = [
+        "ARBITRAGE PATH SIMULATION REPORT",
+        "=" * 40,
+        f"Status          : {status_line}",
+        f"Entry Asset     : {data.get('entry_asset', entry_asset)}",
+        f"Exit Asset      : {data.get('exit_asset', exit_asset)}",
+        f"Volume          : {data.get('volume_usdc', volume_usdc):.4f} USDC",
+        f"Agent Chain     : {chain_display}",
+        f"Slippage Tol.   : {data.get('slippage_tolerance_pct', 0.005) * 100:.2f}%",
+        f"Total Slippage  : {data.get('total_slippage_usdc', 0.0):.6f} USDC",
+        f"Expected Output : {data.get('expected_output_usdc', 0.0):.6f} USDC",
+        f"Rejection Reason: {rejection}",
+        "",
+        f"HOP BREAKDOWN ({hop_count} hop(s))",
+        "-" * 40,
+    ]
+
+    for step in data.get("steps", []):
+        hop_idx = step.get("step", "?")
+        agent = step.get("agent_id", "?")
+        found = step.get("wallet_found", False)
+        sufficient = step.get("balance_sufficient", False)
+        blocked = step.get("pending_sync_blocked", False)
+        balance = step.get("balance_usdc", 0.0)
+        floor_ = step.get("slippage_floor_usdc", 0.0)
+
+        if not found:
+            hop_status = "FAIL — wallet not registered"
+        elif blocked:
+            hop_status = "FAIL — PENDING_SYNC limbo block"
+        elif not sufficient:
+            hop_status = f"FAIL — balance {balance:.4f} < floor {floor_:.4f} USDC"
+        else:
+            hop_status = f"OK   — balance {balance:.4f} USDC (floor {floor_:.6f})"
+
+        lines.append(f"  Hop {hop_idx}: {agent:<24} {hop_status}")
+
+    lines += [
+        "-" * 40,
+        f"Simulation source: {_API_BASE}/api/v1/arbitrage/route-path",
+        "Note: dry-run only — no ledger mutations committed.",
+    ]
+
+    return "\n".join(lines)
 
 
 if __name__ == "__main__":

@@ -7,6 +7,8 @@ Tests are isolated by unique agent_id prefixes — no per-test rollback needed.
 
 import json
 import sys
+import time as _time
+import uuid as _uuid
 from pathlib import Path
 
 import pytest
@@ -16,6 +18,10 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
+
+# Must match config.PROTOCOL_DOMAIN — kept in sync manually so the test
+# module has no import dependency on the app config at collection time.
+_PROTOCOL_DOMAIN = "vectrafi-sandbox-v1"
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
@@ -83,10 +89,21 @@ def get_balance(agent_id: str) -> float:
     db = _TestSessionLocal()
     wallet = db.get(AgentWallet, agent_id)
     db.close()
-    return wallet.balance_usdc if wallet else None
+    # F-03: balance_usdc is now Decimal; convert to float for test comparisons.
+    return float(wallet.balance_usdc) if wallet else None
 
 
 def sign_body(acct, body: dict) -> str:
+    """
+    EIP-191 sign `body` after injecting F-02 replay-protection fields.
+
+    Mutates `body` in-place (adds nonce/issued_at/chain_id with setdefault so
+    tests can override individual fields). The caller's `json=body` POST will
+    therefore include the same fields that were signed.
+    """
+    body.setdefault("nonce", str(_uuid.uuid4()))
+    body.setdefault("issued_at", int(_time.time()))
+    body.setdefault("chain_id", _PROTOCOL_DOMAIN)
     body_text = json.dumps(body, separators=(",", ":"))
     msg = encode_defunct(text=body_text)
     signed = acct.sign_message(msg)

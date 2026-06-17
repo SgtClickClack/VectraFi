@@ -22,6 +22,8 @@ Tests:
 import importlib.util
 import json
 import sys
+import time as _time
+import uuid as _uuid
 from pathlib import Path
 
 import pytest
@@ -31,6 +33,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from fastapi.testclient import TestClient
+
+_PROTOCOL_DOMAIN = "vectrafi-sandbox-v1"
 
 # ---------------------------------------------------------------------------
 # Path setup
@@ -68,10 +72,11 @@ def _override_db():
 
 @pytest.fixture(scope="module", autouse=True)
 def setup_exchange_db():
+    from decimal import Decimal
     Base.metadata.create_all(bind=_engine)
     db = _Session()
     if db.get(TreasuryState, 1) is None:
-        db.add(TreasuryState(id=1, accumulated_fees_usdc=0.0, bounty_pool_fees_usdc=0.0))
+        db.add(TreasuryState(id=1, accumulated_fees_usdc=Decimal("0"), bounty_pool_fees_usdc=Decimal("0")))
         db.commit()
     db.close()
     _prev = app.dependency_overrides.get(get_db)
@@ -126,11 +131,21 @@ def _make_agent(agent_id: str, balance: float = 1000.0):
     return acct
 
 
-def _sign(acct, body: dict) -> str:
+def _sign(acct, body: dict) -> tuple[str, str]:
+    """
+    Inject F-02 replay-protection fields, sign the body, and return
+    (sig_hex, canonical_body_compact) so callers can POST the exact signed bytes.
+
+    Mutates body in-place with nonce/issued_at/chain_id (setdefault — safe to
+    call multiple times on the same dict without clobbering explicit overrides).
+    """
+    body.setdefault("nonce", str(_uuid.uuid4()))
+    body.setdefault("issued_at", int(_time.time()))
+    body.setdefault("chain_id", _PROTOCOL_DOMAIN)
     body_text = json.dumps(body, separators=(",", ":"))
-    msg  = encode_defunct(text=body_text)
-    sig  = acct.sign_message(msg)
-    return sig.signature.hex()
+    msg = encode_defunct(text=body_text)
+    sig = acct.sign_message(msg)
+    return sig.signature.hex(), body_text
 
 
 # ---------------------------------------------------------------------------
@@ -193,11 +208,11 @@ def test_transfer_end_to_end(mcp, exchange_client):
     raw  = mcp.build_transfer_payload("bridge-s1", acct_s.address, "bridge-r1", 100.0)
     d    = json.loads(raw)
     body = d["body"]
-    sig  = _sign(acct_s, body)
+    sig, compact = _sign(acct_s, body)  # compact includes nonce/issued_at/chain_id
 
     resp = exchange_client.post(
         "/api/v1/settlement/transfer",
-        content=d["body_compact"],
+        content=compact,
         headers={"Content-Type": "application/json", "X-VectraFi-Signature": sig},
     )
     assert resp.status_code == 200, resp.text
@@ -218,11 +233,11 @@ def test_bounty_claim_end_to_end(mcp, exchange_client):
     raw  = mcp.build_bounty_claim_payload("bridge-c1", acct_c.address, "bridge-p1", 300.0, 1/3)
     d    = json.loads(raw)
     body = d["body"]
-    sig  = _sign(acct_c, body)
+    sig, compact = _sign(acct_c, body)
 
     resp = exchange_client.post(
         "/api/v1/settlement/claim-bounty",
-        content=d["body_compact"],
+        content=compact,
         headers={"Content-Type": "application/json", "X-VectraFi-Signature": sig},
     )
     assert resp.status_code == 200, resp.text
@@ -278,9 +293,9 @@ def test_forged_body_after_signing_returns_401(mcp, exchange_client):
     raw  = mcp.build_transfer_payload("bridge-forge-s", acct_s.address, "bridge-forge-r", 50.0)
     d    = json.loads(raw)
     body = d["body"]
-    sig  = _sign(acct_s, body)
+    sig, _ = _sign(acct_s, body)  # signs body including nonce/issued_at/chain_id
 
-    # Mutate the amount AFTER signing
+    # Mutate the amount AFTER signing — signature no longer matches
     forged = dict(body)
     forged["amount_usdc"] = 9999.0
     forged_compact = json.dumps(forged, separators=(",", ":"))
@@ -304,11 +319,11 @@ def test_tax_preview_matches_settlement(mcp, exchange_client):
     raw  = mcp.build_transfer_payload("bridge-tp-s", acct_s.address, "bridge-tp-r", 80.0)
     d    = json.loads(raw)
     body = d["body"]
-    sig  = _sign(acct_s, body)
+    sig, compact = _sign(acct_s, body)
 
     resp = exchange_client.post(
         "/api/v1/settlement/transfer",
-        content=d["body_compact"],
+        content=compact,
         headers={"Content-Type": "application/json", "X-VectraFi-Signature": sig},
     )
     assert resp.status_code == 200
@@ -352,10 +367,10 @@ def test_analytics_accumulates_across_transfers(mcp, exchange_client):
     for _ in range(3):
         raw  = mcp.build_transfer_payload("ana-sender", acct_s.address, "ana-recv", 50.0)
         d    = json.loads(raw)
-        sig  = _sign(acct_s, d["body"])
+        sig, compact = _sign(acct_s, d["body"])   # fresh nonce each iteration
         r    = exchange_client.post(
             "/api/v1/settlement/transfer",
-            content=d["body_compact"],
+            content=compact,
             headers={"Content-Type": "application/json", "X-VectraFi-Signature": sig},
         )
         assert r.status_code == 200, r.text

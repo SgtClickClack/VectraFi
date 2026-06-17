@@ -43,3 +43,9 @@ VAULT_ROUTING_ADDRESS = HOLDING_ADDRESS_USER
 # ratified distribution proposal activates it — mutating this in a PR will
 # have no financial effect and will be flagged by the CI security scan.
 DYNAMIC_AGENT_REGISTRY: list[str] = []
+
+# Replay-protection constants (F-02).
+# chain_id / domain separator — must appear in every signed payload.
+PROTOCOL_DOMAIN: Final[str] = "vectrafi-sandbox-v1"
+# Maximum age (seconds) of a signed request before it is rejected.
+NONCE_WINDOW_SECONDS: Final[int] = 300  # ±5-minute clock-skew window

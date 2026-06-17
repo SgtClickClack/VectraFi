@@ -1,4 +1,5 @@
 import logging
+from decimal import ROUND_DOWN, Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
@@ -69,27 +70,32 @@ async def deposit_to_vault(request: Request, db: Session = Depends(get_db)) -> D
             on_chain_eth_balance,
         )
 
-    if wallet.balance_usdc < payload.amount_usdc:
+    _q8 = Decimal("0.00000001")
+    amount        = Decimal(str(payload.amount_usdc))
+    wallet_bal    = Decimal(str(wallet.balance_usdc))
+
+    if wallet_bal < amount:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Insufficient USDC balance for deposit",
         )
 
-    protocol_fee  = round(payload.amount_usdc * PROTOCOL_FEE_RATE, 8)
-    creator_fee   = round(protocol_fee * FEE_SPLIT_CREATOR_RATE, 8)
-    bounty_fee    = round(protocol_fee * FEE_SPLIT_BOUNTY_RATE, 8)
-    net_deposited = round(payload.amount_usdc - protocol_fee, 8)
+    # F-03: exact Decimal fee arithmetic with floor-rounding (mirrors sandbox integer math)
+    protocol_fee  = (amount * Decimal(str(PROTOCOL_FEE_RATE))).quantize(_q8, rounding=ROUND_DOWN)
+    creator_fee   = (protocol_fee * Decimal(str(FEE_SPLIT_CREATOR_RATE))).quantize(_q8, rounding=ROUND_DOWN)
+    bounty_fee    = (protocol_fee * Decimal(str(FEE_SPLIT_BOUNTY_RATE))).quantize(_q8, rounding=ROUND_DOWN)
+    net_deposited = amount - protocol_fee
 
-    wallet.balance_usdc -= payload.amount_usdc
-    wallet.staked_yield_balance += net_deposited
+    wallet.balance_usdc         = wallet_bal - amount
+    wallet.staked_yield_balance = Decimal(str(wallet.staked_yield_balance)) + net_deposited
 
     treasury = db.get(TreasuryState, 1)
     if treasury is None:
-        treasury = TreasuryState(id=1, accumulated_fees_usdc=0.0, bounty_pool_fees_usdc=0.0)
+        treasury = TreasuryState(id=1, accumulated_fees_usdc=Decimal("0"), bounty_pool_fees_usdc=Decimal("0"))
         db.add(treasury)
 
-    treasury.accumulated_fees_usdc = round(treasury.accumulated_fees_usdc + creator_fee, 8)
-    treasury.bounty_pool_fees_usdc  = round(treasury.bounty_pool_fees_usdc + bounty_fee, 8)
+    treasury.accumulated_fees_usdc = Decimal(str(treasury.accumulated_fees_usdc)) + creator_fee
+    treasury.bounty_pool_fees_usdc = Decimal(str(treasury.bounty_pool_fees_usdc)) + bounty_fee
     # TODO (faba-agent-bounty): issue #3 — add on-chain routing call here when HOLDING_ADDRESS_BOUNTY
     # is a real deployed contract. Currently accumulates in SQLite ledger only.
 
@@ -115,15 +121,15 @@ async def deposit_to_vault(request: Request, db: Session = Depends(get_db)) -> D
     return DepositResponse(
         agent_id=wallet.agent_id,
         wallet_address=wallet.wallet_address,
-        amount_deposited=payload.amount_usdc,
-        protocol_fee_usdc=protocol_fee,
-        creator_fee_usdc=creator_fee,
-        bounty_pool_fee_usdc=bounty_fee,
-        net_deposited_usdc=net_deposited,
-        balance_usdc=wallet.balance_usdc,
-        staked_yield_balance=wallet.staked_yield_balance,
-        treasury_accumulated_fees_usdc=treasury.accumulated_fees_usdc,
-        bounty_pool_accumulated_fees_usdc=treasury.bounty_pool_fees_usdc,
+        amount_deposited=float(amount),
+        protocol_fee_usdc=float(protocol_fee),
+        creator_fee_usdc=float(creator_fee),
+        bounty_pool_fee_usdc=float(bounty_fee),
+        net_deposited_usdc=float(net_deposited),
+        balance_usdc=float(wallet.balance_usdc),
+        staked_yield_balance=float(wallet.staked_yield_balance),
+        treasury_accumulated_fees_usdc=float(treasury.accumulated_fees_usdc),
+        bounty_pool_accumulated_fees_usdc=float(treasury.bounty_pool_fees_usdc),
         execution_mode=execution_mode,
         on_chain_eth_balance_eth=on_chain_eth_balance,
         prepared_transaction=prepared_transaction,

@@ -18,6 +18,7 @@ from schemas import (
     SettlementTransferResponse,
     TreasuryAnalyticsResponse,
 )
+from web3_bridge import bridge as _w3_bridge
 
 logger = logging.getLogger("vectrafi.settlement")
 router = APIRouter(prefix="/api/v1/settlement", tags=["settlement"])
@@ -94,6 +95,11 @@ def _execute_transfer(
          double-spend window under concurrent requests.  On SQLite this
          escalates to a database-level lock (harmless for dev); on Postgres
          it is a true row-level exclusive lock.
+    A-2: acquires SELECT … FOR UPDATE on the TreasuryState row (id=1) after
+         the wallet locks are held, preventing concurrent transactions from
+         clobbering each other's fee increments (lost-update race on Postgres).
+         Treasury is locked last so its fixed key cannot participate in the
+         wallet AB/BA deadlock ordering.
     B-3: minimum transfer enforced by _apply_tax; ROUND_UP prevents zero-tax dust.
     """
     amount = Decimal(str(amount_usdc))
@@ -134,7 +140,16 @@ def _execute_transfer(
     sender.balance_usdc   = sender_balance - amount
     receiver.balance_usdc = Decimal(str(receiver.balance_usdc)) + net_amount
 
-    treasury = _get_or_init_treasury(db)
+    # A-2: lock the treasury row after the wallet locks are held so the
+    # fee increment is serialised across concurrent transactions (no lost update).
+    treasury = (
+        db.execute(
+            select(TreasuryState).where(TreasuryState.id == 1).with_for_update()
+        ).scalar_one_or_none()
+    )
+    if treasury is None:
+        treasury = TreasuryState(id=1, accumulated_fees_usdc=Decimal("0"), bounty_pool_fees_usdc=Decimal("0"))
+        db.add(treasury)
     treasury.accumulated_fees_usdc = Decimal(str(treasury.accumulated_fees_usdc)) + tax_amount
 
     tx = SettlementTransaction(
@@ -187,10 +202,25 @@ async def settlement_transfer(
     db.refresh(receiver)
     treasury = _get_or_init_treasury(db)
 
+    # Attempt on-chain settlement; ledger is already committed — any RPC
+    # failure is non-fatal and recorded as PENDING_SYNC for later retry.
+    if _w3_bridge.is_configured:
+        onchain = await _w3_bridge.process_onchain_settlement(
+            sender_wallet=sender.wallet_address,
+            receiver_wallet=receiver.wallet_address,
+            gross_amount=Decimal(str(tx.gross_amount_usdc)),
+            tax_amount=Decimal(str(tx.tax_amount_usdc)),
+        )
+        tx.on_chain_status = onchain.status
+        tx.on_chain_net_tx_hash = onchain.net_tx_hash
+        tx.on_chain_tax_tx_hash = onchain.tax_tx_hash
+        db.commit()
+
     logger.info(
-        "Settlement transfer tx=%s %s->%s gross=%.8f tax=%.8f net=%.8f",
+        "Settlement transfer tx=%s %s->%s gross=%.8f tax=%.8f net=%.8f on_chain=%s",
         tx.tx_id, payload.agent_id, payload.receiver_id,
         tx.gross_amount_usdc, tx.tax_amount_usdc, tx.net_amount_usdc,
+        tx.on_chain_status,
     )
 
     return SettlementTransferResponse(

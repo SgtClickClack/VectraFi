@@ -1,4 +1,5 @@
 import logging
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
@@ -64,26 +65,33 @@ async def execute_swap(request: Request, db: Session = Depends(get_db)) -> SwapR
             on_chain_eth_balance,
         )
 
+    # F-03: Decimal balance mutations prevent accumulated float drift across swaps.
+    # Exchange rates remain float (sourced from external pricing); only ledger
+    # mutations use Decimal to maintain per-wallet precision.
     if payload.from_token == "USDC":
-        if wallet.balance_usdc < payload.amount:
+        usdc_bal = Decimal(str(wallet.balance_usdc))
+        debit    = Decimal(str(payload.amount))
+        if usdc_bal < debit:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Insufficient USDC balance",
             )
         execution_price = prices["HBAR"] / prices["USDC"]
         amount_out = payload.amount / execution_price
-        wallet.balance_usdc -= payload.amount
-        wallet.balance_hbar += amount_out
+        wallet.balance_usdc = usdc_bal - debit
+        wallet.balance_hbar = Decimal(str(wallet.balance_hbar)) + Decimal(str(amount_out))
     else:
-        if wallet.balance_hbar < payload.amount:
+        hbar_bal = Decimal(str(wallet.balance_hbar))
+        debit    = Decimal(str(payload.amount))
+        if hbar_bal < debit:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Insufficient HBAR balance",
             )
         execution_price = prices["HBAR"] / prices["USDC"]
         amount_out = payload.amount * execution_price
-        wallet.balance_hbar -= payload.amount
-        wallet.balance_usdc += amount_out
+        wallet.balance_hbar = hbar_bal - debit
+        wallet.balance_usdc = Decimal(str(wallet.balance_usdc)) + Decimal(str(amount_out))
 
     db.commit()
     db.refresh(wallet)
@@ -108,8 +116,8 @@ async def execute_swap(request: Request, db: Session = Depends(get_db)) -> SwapR
         amount_in=payload.amount,
         amount_out=amount_out,
         execution_price=execution_price,
-        balance_usdc=wallet.balance_usdc,
-        balance_hbar=wallet.balance_hbar,
+        balance_usdc=float(wallet.balance_usdc),
+        balance_hbar=float(wallet.balance_hbar),
         execution_mode=execution_mode,
         on_chain_eth_balance_eth=on_chain_eth_balance,
         prepared_transaction=prepared_transaction,

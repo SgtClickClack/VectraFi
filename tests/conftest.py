@@ -2,6 +2,8 @@
 VectraFi baseline test infrastructure.
 """
 import sys
+import time as _time
+import uuid as _uuid
 from pathlib import Path
 
 # Ensure core-exchange src is importable regardless of working directory
@@ -23,6 +25,9 @@ from database import Base, get_db
 from main import app
 from models import AgentWallet, TreasuryState
 
+# Must match config.PROTOCOL_DOMAIN
+_PROTOCOL_DOMAIN = "vectrafi-sandbox-v1"
+
 # In-memory SQLite with StaticPool ensures all sessions share the same DB connection.
 _TEST_DB_URL = "sqlite:///:memory:"
 _test_engine = create_engine(
@@ -42,7 +47,15 @@ def _override_get_db():
 
 
 def _sign_body(private_key: str, body: dict) -> str:
-    """EIP-191 personal-sign of a JSON body dict — mirrors auth.py verification exactly."""
+    """
+    EIP-191 personal-sign of a JSON body dict — mirrors auth.py verification exactly.
+
+    Injects F-02 replay-protection fields (nonce/issued_at/chain_id) before signing,
+    mutating body in-place so the caller's POST body matches what was signed.
+    """
+    body.setdefault("nonce", str(_uuid.uuid4()))
+    body.setdefault("issued_at", int(_time.time()))
+    body.setdefault("chain_id", _PROTOCOL_DOMAIN)
     body_text = json.dumps(body, separators=(",", ":"))
     msg = encode_defunct(text=body_text)
     return Account.sign_message(msg, private_key=private_key).signature.hex()
@@ -54,7 +67,8 @@ def client():
     Base.metadata.create_all(bind=_test_engine)
     with _TestSession() as db:
         if db.get(TreasuryState, 1) is None:
-            db.add(TreasuryState(id=1, accumulated_fees_usdc=0.0, bounty_pool_fees_usdc=0.0))
+            from decimal import Decimal
+            db.add(TreasuryState(id=1, accumulated_fees_usdc=Decimal("0"), bounty_pool_fees_usdc=Decimal("0")))
             db.commit()
 
     app.dependency_overrides[get_db] = _override_get_db

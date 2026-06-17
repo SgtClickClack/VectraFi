@@ -276,6 +276,16 @@ Add to your `mcp_config.json`:
 | `get_protocol_state` | *(none)* | Returns live `accumulated_creator_fees_usdc`, `bounty_pool_fees_usdc`, and `registered_agents` from the SQLite ledger. |
 | `generate_eip191_template` | `operation` (`swap`\|`deposit`), `agent_id`, `wallet_address` | Returns a pre-filled JSON body and step-by-step EIP-191 signing instructions for the requested endpoint. |
 
+### Smithery Registry (Live)
+
+The FABA Protocol MCP server is published to the Smithery registry and available for direct agent installation:
+
+| Field | Value |
+|---|---|
+| Registry page | https://smithery.ai/servers/julian-g-roberts/faba-protocol |
+| Hosted MCP URL | https://faba-protocol--julian-g-roberts.run.tools |
+| Install command | `smithery mcp add julian-g-roberts/faba-protocol` |
+
 ### Static server card (Smithery / registry discovery)
 
 `.well-known/mcp/server-card.json` declares all three tools in the JSON schema that Smithery and compatible agent registries can read without running the server. It mirrors the tool list in `mcp/faba_server.py` exactly:

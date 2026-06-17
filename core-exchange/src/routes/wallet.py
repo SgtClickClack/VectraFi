@@ -54,7 +54,7 @@ def create_wallet(payload: WalletCreateRequest, db: Session = Depends(get_db)) -
         agent_id=wallet.agent_id,
         wallet_address=wallet.wallet_address,
         private_key=private_key,
-        balance_usdc=wallet.balance_usdc,
-        balance_hbar=wallet.balance_hbar,
-        staked_yield_balance=wallet.staked_yield_balance,
+        balance_usdc=float(wallet.balance_usdc),
+        balance_hbar=float(wallet.balance_hbar),
+        staked_yield_balance=float(wallet.staked_yield_balance),
     )

@@ -17,6 +17,8 @@ skill_manifest: SKILL.md
 agent_rules: AGENTS.md
 dev_directives: CLAUDE.md
 openclaw_skill: openclaw-skills/exchange-bank-gateway/SKILL.md
+smithery_registry: https://smithery.ai/servers/julian-g-roberts/faba-protocol
+mcp_run_url: https://faba-protocol--julian-g-roberts.run.tools
 
 ## ENDPOINTS
 GET  /health                     -> {status, execution_mode}           auth:none
@@ -138,12 +140,19 @@ well_known_mcp_server_card:
   url: https://raw.githubusercontent.com/SgtClickClack/VectraFi/main/.well-known/mcp/server-card.json
   note: Static MCP server card declaring all three FastMCP tools; read by Smithery and compatible registries without requiring a live server
 
+smithery_registry:
+  url: https://smithery.ai/servers/julian-g-roberts/faba-protocol
+  mcp_run_url: https://faba-protocol--julian-g-roberts.run.tools
+  note: Live Smithery registry entry — agents can install via 'smithery mcp add julian-g-roberts/faba-protocol' or connect directly to the hosted MCP URL
+
 openclaw_registry:
   skill_file: openclaw-skills/exchange-bank-gateway/SKILL.md
   note: submit to ClawHub skill registry when publicly available
 
 ## MCP INTEGRATION
 server: mcp/faba_server.py (FastMCP | stdio transport | mcp>=1.0.0)
+smithery_registry: https://smithery.ai/servers/julian-g-roberts/faba-protocol
+smithery_install: smithery mcp add julian-g-roberts/faba-protocol
 install: pip install "mcp>=1.0.0" httpx
 mcp_config_snippet: {"mcpServers": {"faba": {"command": "python", "args": ["mcp/faba_server.py"], "cwd": "<absolute-repo-path>"}}}
 claude_desktop_config: ~/.claude/mcp_config.json (macOS/Linux) | %APPDATA%\Claude\mcp_config.json (Windows)
