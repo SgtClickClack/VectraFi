@@ -1,8 +1,8 @@
 {
   "manifest_version": "0.2",
   "name": "faba-protocol",
-  "version": "1.0.0",
-  "description": "VectraFi FABA Protocol MCP Server — inspect open bounties, query live treasury state, and generate EIP-191 signing templates for autonomous agent runtimes.",
+  "version": "1.0.2",
+  "description": "VectraFi FABA Protocol MCP Server — inspect open bounties, query live treasury state, generate EIP-191 signing templates, build signature-verified settlement payloads, and stream live treasury telemetry for autonomous agent runtimes.",
   "author": {
     "name": "SgtClickClack",
     "url": "https://github.com/SgtClickClack/VectraFi"
@@ -28,8 +28,24 @@
       "description": "Query active transaction volumes and pooled sandbox parameters from the SQLite ledger"
     },
     {
+      "name": "get_agent_balance",
+      "description": "Look up the sandbox ledger balance for a given agent_id from workspace/bank.db"
+    },
+    {
       "name": "generate_eip191_template",
       "description": "Generate an execution-ready EIP-191 payload signature schema for swap or deposit operations"
+    },
+    {
+      "name": "build_transfer_payload",
+      "description": "Build the exact JSON body and compact signing string for POST /api/v1/settlement/transfer"
+    },
+    {
+      "name": "build_bounty_claim_payload",
+      "description": "Build the exact JSON body and compact signing string for POST /api/v1/settlement/claim-bounty"
+    },
+    {
+      "name": "get_treasury_telemetry",
+      "description": "Fetch live treasury analytics from the core-exchange: fee accumulation, transaction count, total volume, and active wallet count"
     }
   ],
   "license": "MIT"
