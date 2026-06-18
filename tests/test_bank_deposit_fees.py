@@ -1,5 +1,6 @@
 import json
 import sys
+import time
 from pathlib import Path
 from uuid import uuid4
 
@@ -12,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "core-exchange" / "src"
 sys.path.insert(0, str(SRC))
 
+from config import PROTOCOL_DOMAIN  # noqa: E402
 from main import app  # noqa: E402
 
 
@@ -38,6 +40,9 @@ def _signed_deposit(client: TestClient, wallet: dict, amount_usdc: float):
         {
             "agent_id": wallet["agent_id"],
             "wallet_address": wallet["wallet_address"],
+            "nonce": uuid4().hex,
+            "issued_at": int(time.time()),
+            "chain_id": PROTOCOL_DOMAIN,
             "amount_usdc": amount_usdc,
         },
         wallet["private_key"],
