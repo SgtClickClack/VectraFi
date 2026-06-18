@@ -78,7 +78,8 @@ _USDC_DECIMALS_DEFAULT: Final[int] = 6
 class OnchainSettlementResult:
     """Return value of process_onchain_settlement."""
 
-    status: str  # CONFIRMING | PENDING_SYNC | FAILED
+    status: str          # CONFIRMING | PENDING_SYNC | FAILED
+    settlement_mode: str = "escrow"  # "escrow" | "p2p"
     net_tx_hash: str | None = None
     tax_tx_hash: str | None = None
     error: str | None = None
@@ -97,9 +98,18 @@ class Web3Bridge:
     """
     Async bridge between VectraFi's internal ledger and ERC-20 transfers on L2.
 
-    The platform's signing account (PROTOCOL_PRIVATE_KEY) pays gas and is also
-    the source of the on-chain USDC — VectraFi operates a central escrow model
-    where all user balances are held in the protocol's treasury wallet.
+    Two settlement modes (selected per-call by whether a sender private key is
+    supplied to process_onchain_settlement):
+
+      P2P mode   — the sender's own wallet signs Leg 1 (net → receiver), directly
+                   debiting their on-chain USDC balance.  The protocol key signs
+                   only Leg 2 (tax → treasury).  Zero-sum across participant wallets;
+                   no escrow balance is consumed.
+
+      Escrow mode (default) — both legs are signed by PROTOCOL_PRIVATE_KEY.  A
+                   USDC balance preflight is executed before any broadcast: if the
+                   escrow account holds fewer tokens than gross_amount the settlement
+                   is deferred to PENDING_SYNC rather than draining the escrow blindly.
 
     Instantiate once at startup; reuse across requests (the AsyncWeb3 session is
     created lazily on first use and cached for the process lifetime).
@@ -187,9 +197,15 @@ class Web3Bridge:
         max_fee_per_gas: int,
         max_priority_fee_per_gas: int,
         chain_id: int,
+        from_account: LocalAccount | None = None,
     ) -> str:
-        """Build, sign, and broadcast a single ERC-20 transfer. Returns the tx hash."""
-        if self._account is None:
+        """Build, sign, and broadcast a single ERC-20 transfer. Returns the tx hash.
+
+        from_account: the LocalAccount that signs the transaction and pays gas.
+        Defaults to self._account (the protocol escrow key) when None.
+        """
+        signer = from_account if from_account is not None else self._account
+        if signer is None:
             raise Web3BridgeError("PROTOCOL_PRIVATE_KEY is not set")
 
         contract = w3.eth.contract(
@@ -202,7 +218,7 @@ class Web3Bridge:
             amount_wei,
         ).build_transaction(
             {
-                "from": self._account.address,
+                "from": signer.address,
                 "nonce": nonce,
                 "gas": _GAS_LIMIT,
                 "maxFeePerGas": max_fee_per_gas,
@@ -211,9 +227,21 @@ class Web3Bridge:
             }
         )
 
-        signed = self._account.sign_transaction(tx)
+        signed = signer.sign_transaction(tx)
         tx_hash = await w3.eth.send_raw_transaction(signed.raw_transaction)
         return tx_hash.hex()
+
+    async def _get_usdc_balance_wei(self, w3: AsyncWeb3, address: str) -> int:
+        """Return the on-chain ERC-20 USDC balance of address in token-unit integers."""
+        contract = w3.eth.contract(
+            address=AsyncWeb3.to_checksum_address(self.usdc_address),  # type: ignore[arg-type]
+            abi=_ERC20_TRANSFER_ABI,
+        )
+        return int(
+            await contract.functions.balanceOf(
+                AsyncWeb3.to_checksum_address(address)
+            ).call()
+        )
 
     # ------------------------------------------------------------------
     # Primary public interface
@@ -225,36 +253,67 @@ class Web3Bridge:
         receiver_wallet: str,
         gross_amount: Decimal,
         tax_amount: Decimal,
+        sender_private_key: str | None = None,
     ) -> OnchainSettlementResult:
         """
         Submit two ERC-20 transfers to the L2 network:
           1. net_amount  → receiver_wallet
           2. tax_amount  → PLATFORM_TREASURY_ADDRESS
 
-        Both are signed by PROTOCOL_PRIVATE_KEY (the platform's gas/escrow account).
-        Transfers are sequential; true atomicity requires a custom settlement contract
-        (not yet deployed). If either transfer cannot be submitted — due to RPC
-        timeout, connectivity loss, or gas price exceeding _MAX_GAS_PRICE_GWEI —
-        the function returns status=PENDING_SYNC so the caller can persist that
-        value in the settlement row and retry later without double-committing the
+        Settlement mode is selected by whether sender_private_key is supplied:
+
+          P2P mode  (sender_private_key provided):
+            Leg 1 is signed by the *sender's own wallet* — their on-chain USDC
+            balance is directly debited, making the settlement zero-sum across
+            participant wallets.  Leg 2 (tax) is signed by the protocol key so
+            the treasury always receives via the authorised platform account.
+            No escrow balance is consumed in P2P mode.
+
+          Escrow mode  (sender_private_key is None — default):
+            Both legs are signed by PROTOCOL_PRIVATE_KEY.  A USDC balance
+            preflight is executed before any broadcast: if the escrow account
+            holds fewer tokens than gross_amount the call returns PENDING_SYNC
+            with error "escrow_underfunded" rather than draining the account
+            blindly.  This surfaces accounting gaps without causing fund loss.
+
+        Transfers are sequential; true atomicity requires a custom settlement
+        contract (not yet deployed).  If either transfer cannot be submitted —
+        due to RPC timeout, connectivity loss, or gas price exceeding
+        _MAX_GAS_PRICE_GWEI — the function returns status=PENDING_SYNC so the
+        caller can persist that value and retry without double-committing the
         ledger debit.
 
         Args:
-            sender_wallet:   On-chain address of the sending agent (for audit logs).
-            receiver_wallet: On-chain address of the receiving agent.
-            gross_amount:    Gross USDC amount (before tax).
-            tax_amount:      Tax portion in USDC (routed to treasury).
+            sender_wallet:      On-chain address of the sending agent (audit log).
+            receiver_wallet:    On-chain address of the receiving agent.
+            gross_amount:       Gross USDC amount (before tax).
+            tax_amount:         Tax portion in USDC (routed to treasury).
+            sender_private_key: Hex-encoded private key of the sender's wallet.
+                                When supplied the settlement runs in P2P mode.
 
         Returns:
-            OnchainSettlementResult with status in {CONFIRMED, PENDING_SYNC, FAILED}.
+            OnchainSettlementResult with status in {CONFIRMING, PENDING_SYNC, FAILED}.
         """
         if not self.is_configured:
             return OnchainSettlementResult(
                 status="PENDING_SYNC",
+                settlement_mode="escrow",
                 error="Web3Bridge not fully configured — operating in sandbox mode",
             )
 
         net_amount = gross_amount - tax_amount
+
+        # Resolve settlement mode and sender account.
+        sender_account: LocalAccount | None = None
+        settlement_mode = "escrow"
+        if sender_private_key is not None:
+            pk = (
+                sender_private_key
+                if sender_private_key.startswith("0x")
+                else f"0x{sender_private_key}"
+            )
+            sender_account = Account.from_key(pk)
+            settlement_mode = "p2p"
 
         # Pre-initialised so exception handlers can surface Leg 1's hash even
         # when Leg 2 fails after nonce N was already broadcast.
@@ -265,6 +324,7 @@ class Web3Bridge:
             decimals = await self._usdc_decimals_cached(w3)
             net_wei = self._to_wei(net_amount, decimals)
             tax_wei = self._to_wei(tax_amount, decimals)
+            gross_wei = self._to_wei(gross_amount, decimals)
 
             chain_id: int = await w3.eth.chain_id
             latest_block = await w3.eth.get_block("latest")
@@ -274,9 +334,9 @@ class Web3Bridge:
             max_fee_gwei = float(AsyncWeb3.from_wei(max_fee_per_gas, "gwei"))
 
             logger.info(
-                "onchain_settlement start sender=%s receiver=%s "
+                "onchain_settlement start mode=%s sender=%s receiver=%s "
                 "gross=%s tax=%s net=%s chain_id=%s max_fee_gwei=%.2f",
-                sender_wallet, receiver_wallet,
+                settlement_mode, sender_wallet, receiver_wallet,
                 gross_amount, tax_amount, net_amount,
                 chain_id, max_fee_gwei,
             )
@@ -290,43 +350,98 @@ class Web3Bridge:
                 )
                 return OnchainSettlementResult(
                     status="PENDING_SYNC",
+                    settlement_mode=settlement_mode,
                     error=f"Max fee {max_fee_gwei:.2f} gwei exceeds ceiling",
                     max_fee_gwei=max_fee_gwei,
                     net_amount_wei=net_wei,
                     tax_amount_wei=tax_wei,
                 )
 
-            assert self._account is not None
-            base_nonce: int = await w3.eth.get_transaction_count(
-                self._account.address, "pending"
-            )
+            assert self._account is not None  # guarded by is_configured above
+
+            if settlement_mode == "escrow":
+                # Preflight: verify the escrow account holds enough on-chain USDC
+                # to cover gross_amount before committing any broadcast.  Without
+                # this the protocol wallet drains on every settlement leg regardless
+                # of whether a matching deposit was ever received.
+                escrow_usdc_wei = await self._get_usdc_balance_wei(
+                    w3, self._account.address
+                )
+                if escrow_usdc_wei < gross_wei:
+                    escrow_human = escrow_usdc_wei / (10 ** decimals)
+                    logger.warning(
+                        "escrow_underfunded sender=%s gross=%.8f USDC "
+                        "escrow_balance=%.8f USDC — deferring to PENDING_SYNC",
+                        sender_wallet, float(gross_amount), escrow_human,
+                    )
+                    return OnchainSettlementResult(
+                        status="PENDING_SYNC",
+                        settlement_mode="escrow",
+                        error=(
+                            f"escrow_underfunded: needs {float(gross_amount):.8f} USDC, "
+                            f"holds {escrow_human:.8f} USDC"
+                        ),
+                        net_amount_wei=net_wei,
+                        tax_amount_wei=tax_wei,
+                        max_fee_gwei=max_fee_gwei,
+                    )
+
+                # Escrow mode: protocol account signs both legs (sequential nonces).
+                leg1_account = self._account
+                leg1_nonce: int = await w3.eth.get_transaction_count(
+                    self._account.address, "pending"
+                )
+                leg2_account = self._account
+                leg2_nonce = leg1_nonce + 1
+
+            else:
+                # P2P mode: sender signs Leg 1 (net → receiver) with their own key,
+                # debiting their actual on-chain USDC balance.  Leg 2 (tax →
+                # treasury) is signed by the protocol key — independent nonce
+                # sequences because the two accounts are different wallets.
+                assert sender_account is not None
+                leg1_account = sender_account
+                leg1_nonce = await w3.eth.get_transaction_count(
+                    sender_account.address, "pending"
+                )
+                leg2_account = self._account
+                leg2_nonce = await w3.eth.get_transaction_count(
+                    self._account.address, "pending"
+                )
 
             # Leg 1: net amount → receiver
             net_tx_hash = await self._build_and_send_transfer(
                 w3,
                 receiver_wallet,
                 net_wei,
-                nonce=base_nonce,
+                nonce=leg1_nonce,
                 max_fee_per_gas=max_fee_per_gas,
                 max_priority_fee_per_gas=max_priority_fee_per_gas,
                 chain_id=chain_id,
+                from_account=leg1_account,
             )
-            logger.info("net_transfer submitted tx=%s", net_tx_hash)
+            logger.info(
+                "net_transfer submitted mode=%s tx=%s", settlement_mode, net_tx_hash
+            )
 
-            # Leg 2: tax amount → platform treasury (nonce+1)
+            # Leg 2: tax amount → platform treasury
             tax_tx_hash = await self._build_and_send_transfer(
                 w3,
                 self.treasury_address,  # type: ignore[arg-type]
                 tax_wei,
-                nonce=base_nonce + 1,
+                nonce=leg2_nonce,
                 max_fee_per_gas=max_fee_per_gas,
                 max_priority_fee_per_gas=max_priority_fee_per_gas,
                 chain_id=chain_id,
+                from_account=leg2_account,
             )
-            logger.info("tax_transfer submitted tx=%s", tax_tx_hash)
+            logger.info(
+                "tax_transfer submitted mode=%s tx=%s", settlement_mode, tax_tx_hash
+            )
 
             return OnchainSettlementResult(
                 status="CONFIRMING",
+                settlement_mode=settlement_mode,
                 net_tx_hash=net_tx_hash,
                 tax_tx_hash=tax_tx_hash,
                 max_fee_gwei=max_fee_gwei,
@@ -338,19 +453,21 @@ class Web3Bridge:
             logger.error("Web3Bridge configuration error: %s", exc)
             return OnchainSettlementResult(
                 status="PENDING_SYNC",
+                settlement_mode=settlement_mode,
                 net_tx_hash=net_tx_hash,
                 error=str(exc),
             )
 
         except (Web3Exception, OSError, TimeoutError, asyncio.TimeoutError) as exc:
             # Network-level failures — ledger is already committed; flag for retry.
-            # net_tx_hash is preserved here so a retry worker knows Leg 1 already
+            # net_tx_hash is preserved so the recovery worker knows Leg 1 already
             # broadcast (nonce N consumed) and must not resubmit it.
             logger.warning(
                 "RPC transport error during settlement — marking PENDING_SYNC: %s", exc
             )
             return OnchainSettlementResult(
                 status="PENDING_SYNC",
+                settlement_mode=settlement_mode,
                 net_tx_hash=net_tx_hash,
                 error=str(exc),
             )
@@ -359,6 +476,7 @@ class Web3Bridge:
             logger.exception("Unexpected error in onchain settlement: %s", exc)
             return OnchainSettlementResult(
                 status="FAILED",
+                settlement_mode=settlement_mode,
                 net_tx_hash=net_tx_hash,
                 error=str(exc),
             )
