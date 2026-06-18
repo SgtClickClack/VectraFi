@@ -1,9 +1,11 @@
 import logging
+import os
 import sys
 import time
 from pathlib import Path
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 
 _TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
@@ -44,6 +46,32 @@ app = FastAPI(
     version="0.3.0",
 )
 
+# ---------------------------------------------------------------------------
+# CORS
+# ALLOWED_ORIGINS env var: comma-separated list of permitted origins.
+# Local dev defaults are always included so unset == safe for development.
+# ---------------------------------------------------------------------------
+_DEFAULT_ORIGINS = [
+    "http://localhost:3000",
+    "http://localhost:8000",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:8000",
+]
+_env_origins = [
+    o.strip()
+    for o in os.getenv("ALLOWED_ORIGINS", "").split(",")
+    if o.strip()
+]
+_origins = list(dict.fromkeys(_DEFAULT_ORIGINS + _env_origins))  # dedupe, preserve order
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "X-VectraFi-Signature"],
+)
+
 app.include_router(analytics_router)
 app.include_router(arbitrage_router)
 app.include_router(market_router)
@@ -77,6 +105,7 @@ def on_startup() -> None:
     logger.info("VectraFi core exchange started — mode=%s SQLite backend ready", mode)
 
 
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
 @app.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
 def dashboard() -> HTMLResponse:
     return HTMLResponse((_TEMPLATES_DIR / "index.html").read_text(encoding="utf-8"))
