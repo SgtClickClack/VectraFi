@@ -69,6 +69,14 @@ _SAFETY_FLOOR_PCT  = 0.005
 _TRANSFER_AMOUNT   = 10.0   # USDC per hop — small enough to sustain long runs
 _REBALANCE_VOLUME  = 50.0
 
+# ---------------------------------------------------------------------------
+# Circuit-breaker thresholds (env-overridable)
+# ---------------------------------------------------------------------------
+# Maximum consecutive transfer errors for a single desk before emergency halt.
+_CB_MAX_CONSECUTIVE_ERRORS: int   = int(os.getenv("SWARM_CB_MAX_ERRORS",       "5"))
+# Halt if any desk's balance falls below this fraction of its initial capital.
+_CB_MIN_BALANCE_PCT:        float = float(os.getenv("SWARM_CB_MIN_BALANCE_PCT", "0.80"))
+
 # Agent identities — fixed prefix so re-runs reuse existing wallets (409 = ok).
 _DESK_NAMES = ("Alpha", "Beta", "Gamma")
 
@@ -100,13 +108,15 @@ log = logging.getLogger("swarm")
 
 @dataclass
 class DeskState:
-    name:           str
-    agent_id:       str
-    wallet_address: str
-    private_key:    str
-    balance_usdc:   float
-    transfers_ok:   int = 0
-    transfers_err:  int = 0
+    name:                str
+    agent_id:            str
+    wallet_address:      str
+    private_key:         str
+    balance_usdc:        float
+    initial_balance_usdc: float = 0.0  # set at provision; used by min-balance guard
+    transfers_ok:        int = 0
+    transfers_err:       int = 0
+    consecutive_errors:  int = 0       # reset on success; circuit-breaker trips at threshold
 
 
 @dataclass
@@ -169,12 +179,14 @@ async def _provision_desk(
             "PROVISION  %-12s  agent_id=%-34s  balance=%.2f USDC",
             name, agent_id, d["balance_usdc"],
         )
+        initial_bal = float(d["balance_usdc"])
         return DeskState(
             name=name,
             agent_id=d["agent_id"],
             wallet_address=d["wallet_address"],
             private_key=d["private_key"],
-            balance_usdc=d["balance_usdc"],
+            balance_usdc=initial_bal,
+            initial_balance_usdc=initial_bal,
         )
     elif resp.status_code == 409:
         log.warning("PROVISION  %-12s  409 already exists — cannot retrieve key, skipping", name)
@@ -284,8 +296,9 @@ async def fire_transfer(
             d = resp.json()
             sender.balance_usdc   = d.get("sender_balance_usdc",   sender.balance_usdc)
             receiver.balance_usdc = d.get("receiver_balance_usdc", receiver.balance_usdc)
-            stats.transfers_ok   += 1
-            sender.transfers_ok  += 1
+            stats.transfers_ok       += 1
+            sender.transfers_ok      += 1
+            sender.consecutive_errors = 0   # clear streak on success
             log.info(
                 "TRANSFER  %-7s → %-7s  $%5.2f  %5.0fms  OK  "
                 "sender_bal=%.2f  receiver_bal=%.2f",
@@ -293,27 +306,31 @@ async def fire_transfer(
                 sender.balance_usdc, receiver.balance_usdc,
             )
         else:
-            stats.transfers_err  += 1
-            sender.transfers_err += 1
+            stats.transfers_err       += 1
+            sender.transfers_err      += 1
+            sender.consecutive_errors += 1
             log.warning(
-                "TRANSFER  %-7s → %-7s  $%5.2f  %5.0fms  ERR  HTTP %d: %s",
+                "TRANSFER  %-7s → %-7s  $%5.2f  %5.0fms  ERR  HTTP %d: %s  "
+                "(consecutive_errors=%d)",
                 sender.name, receiver.name, _TRANSFER_AMOUNT, elapsed_ms,
-                resp.status_code, resp.text[:100],
+                resp.status_code, resp.text[:100], sender.consecutive_errors,
             )
 
     except httpx.TimeoutException as exc:
-        stats.transfers_err  += 1
-        sender.transfers_err += 1
+        stats.transfers_err       += 1
+        sender.transfers_err      += 1
+        sender.consecutive_errors += 1
         log.warning(
-            "TRANSFER  %-7s → %-7s  RPC_TIMEOUT: %s",
-            sender.name, receiver.name, exc,
+            "TRANSFER  %-7s → %-7s  RPC_TIMEOUT: %s  (consecutive_errors=%d)",
+            sender.name, receiver.name, exc, sender.consecutive_errors,
         )
     except Exception as exc:
-        stats.transfers_err  += 1
-        sender.transfers_err += 1
+        stats.transfers_err       += 1
+        sender.transfers_err      += 1
+        sender.consecutive_errors += 1
         log.error(
-            "TRANSFER  %-7s → %-7s  UNEXPECTED: %s",
-            sender.name, receiver.name, exc,
+            "TRANSFER  %-7s → %-7s  UNEXPECTED: %s  (consecutive_errors=%d)",
+            sender.name, receiver.name, exc, sender.consecutive_errors,
         )
 
 
@@ -355,6 +372,47 @@ async def maybe_rebalance(
 # ---------------------------------------------------------------------------
 # Main swarm loop
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Circuit breakers
+# ---------------------------------------------------------------------------
+
+class CircuitBreakerTripped(Exception):
+    """Raised when a safety guard threshold is breached; causes sys.exit(1)."""
+
+
+def _check_circuit_breakers(desks: list[DeskState]) -> None:
+    """
+    Evaluate both guards for every active desk.
+    Logs a CRITICAL alert and raises CircuitBreakerTripped on the first breach.
+    """
+    for desk in desks:
+        # Guard 1 — max consecutive errors
+        if desk.consecutive_errors >= _CB_MAX_CONSECUTIVE_ERRORS:
+            log.critical(
+                "CIRCUIT-BREAKER  MAX-ERRORS  %-7s  "
+                "consecutive_errors=%d >= threshold=%d — EMERGENCY SHUTDOWN",
+                desk.name, desk.consecutive_errors, _CB_MAX_CONSECUTIVE_ERRORS,
+            )
+            raise CircuitBreakerTripped(
+                f"desk {desk.name} hit {desk.consecutive_errors} consecutive errors"
+            )
+
+        # Guard 2 — minimum balance (only meaningful once initial balance is known)
+        if desk.initial_balance_usdc > 0:
+            floor = desk.initial_balance_usdc * _CB_MIN_BALANCE_PCT
+            if desk.balance_usdc < floor:
+                log.critical(
+                    "CIRCUIT-BREAKER  MIN-BALANCE  %-7s  "
+                    "balance=%.4f USDC < floor=%.4f (%.0f%% of initial %.4f) — EMERGENCY SHUTDOWN",
+                    desk.name, desk.balance_usdc, floor,
+                    _CB_MIN_BALANCE_PCT * 100, desk.initial_balance_usdc,
+                )
+                raise CircuitBreakerTripped(
+                    f"desk {desk.name} balance {desk.balance_usdc:.4f} USDC "
+                    f"below {_CB_MIN_BALANCE_PCT:.0%} minimum"
+                )
+
 
 async def _post_heartbeat(
     client: httpx.AsyncClient,
@@ -429,12 +487,16 @@ async def swarm_loop(desks: list[DeskState]) -> None:
                 log.info("SWARM  %s", stats.summary())
                 for d in desks:
                     log.info(
-                        "  DESK  %-7s  balance=%.4f USDC  ok=%d  err=%d",
+                        "  DESK  %-7s  balance=%.4f USDC  ok=%d  err=%d  consec_err=%d",
                         d.name, d.balance_usdc, d.transfers_ok, d.transfers_err,
+                        d.consecutive_errors,
                     )
                 await _post_heartbeat(client, desks, stats)
 
-            # 5. Sleep for the remainder of the poll interval
+            # 5. Circuit-breaker evaluation (every iteration)
+            _check_circuit_breakers(desks)
+
+            # 6. Sleep for the remainder of the poll interval
             elapsed = time.perf_counter() - loop_start
             sleep_s = max(0.0, poll_s - elapsed)
             await asyncio.sleep(sleep_s)
@@ -479,6 +541,9 @@ async def main() -> None:
         await swarm_loop(desks)
     except KeyboardInterrupt:
         log.info("SWARM  interrupted by user — exiting cleanly")
+    except CircuitBreakerTripped as exc:
+        log.critical("SWARM  EMERGENCY HALT — circuit breaker tripped: %s", exc)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
