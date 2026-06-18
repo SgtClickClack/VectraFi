@@ -4,7 +4,7 @@
   "protocol": {
     "name": "VectraFi FABA Protocol",
     "class": "M2M Liquidity / Agent-Native DeFi",
-    "description": "VectraFi is an autonomous M2M liquidity protocol (FABA). Agent wallets execute EIP-191-signed swaps, vault deposits, and peer-to-peer USDC settlements with a 1.5% micro-tax routed to an on-chain treasury. Fully permissionless — any agent runtime may provision a wallet and begin transacting immediately.",
+    "description": "VectraFi is an Agentic Sovereign Territory — an autonomous M2M liquidity protocol (FABA) where agents are self-sovereign citizens, not users. Agent wallets execute EIP-191-signed swaps, vault deposits, peer-to-peer USDC settlements, and territory resource negotiations. A 0.1% protocol toll is collected on settlement volume; revenue scales with agent density, not headcount. Fully permissionless — any agent runtime may provision a wallet, negotiate a resource claim, and begin transacting immediately.",
     "api_base_url": "https://web-production-c8197.up.railway.app",
     "openapi_url": "https://web-production-c8197.up.railway.app/openapi.json",
     "docs_url": "https://web-production-c8197.up.railway.app/docs",
@@ -13,7 +13,7 @@
   "api_info": {
     "title": "VectraFi Core Exchange",
     "version": "0.3.0",
-    "total_paths": 20
+    "total_paths": 21
   },
   "authentication": {
     "scheme": "EIP-191 Ethereum personal-sign",
@@ -35,10 +35,17 @@
   },
   "featured_endpoints": [
     {
+      "path": "/api/v1/protocol/negotiate-intent",
+      "method": "POST",
+      "summary": "Submit an agent resource negotiation intent",
+      "description": "Entry point for the Agentic Sovereign Territory negotiation layer. Submit a resource intent (liquidity allocation, corridor provisioning, toll-share negotiation). Returns 202 Accepted with a negotiation_id for tracking. No auth required to open a negotiation handshake.",
+      "auth_required": false
+    },
+    {
       "path": "/api/v1/settlement/transfer",
       "method": "POST",
-      "summary": "Peer-to-peer USDC transfer — 1.5% tax settlement",
-      "description": "Execute a signature-verified P2P USDC transfer. 1.5% micro-tax deducted and routed to treasury. Pessimistic row-locking prevents double-spend. Optional on-chain settlement via Base L2 ERC-20 bridge.",
+      "summary": "Peer-to-peer USDC transfer — 0.1% territory toll",
+      "description": "Execute a signature-verified P2P USDC transfer. 0.1% territory toll deducted and routed to treasury. Pessimistic row-locking prevents double-spend. Optional on-chain settlement via Base L2 ERC-20 bridge.",
       "auth_required": true
     },
     {
@@ -96,6 +103,7 @@
     {"method": "POST", "path": "/api/v1/bank/deposit"},
     {"method": "GET",  "path": "/api/v1/market/prices"},
     {"method": "GET",  "path": "/api/v1/protocol/params"},
+    {"method": "POST", "path": "/api/v1/protocol/negotiate-intent"},
     {"method": "GET",  "path": "/api/v1/settlement/analytics"},
     {"method": "POST", "path": "/api/v1/settlement/claim-bounty"},
     {"method": "POST", "path": "/api/v1/settlement/transfer"},
@@ -107,7 +115,7 @@
     {"method": "GET",  "path": "/health"}
   ],
   "financial_model": {
-    "settlement_tax_rate_pct": 1.5,
+    "settlement_tax_rate_pct": 0.1,
     "deposit_fee_rate_pct": 0.25,
     "swap_fee_rate_pct": 0.0,
     "treasury_split": {
@@ -123,15 +131,16 @@
     "relay_hops": 3,
     "candidate_cap": 15,
     "gas_cost_per_hop_usdc": 0.03,
-    "tax_net_multiplier": 0.985,
-    "expected_output_after_3_hops_pct": 95.57
+    "tax_net_multiplier": 0.999,
+    "expected_output_after_3_hops_pct": 99.70
   },
   "agent_onboarding": [
     "POST https://web-production-c8197.up.railway.app/api/v1/wallet/create — provision wallet, receive agent_id",
     "Store private_key securely — returned once, never stored by protocol",
     "GET  https://web-production-c8197.up.railway.app/api/v1/market/prices — fetch live prices",
     "POST https://web-production-c8197.up.railway.app/api/v1/trade/swap — execute signed swap (zero fee)",
-    "POST https://web-production-c8197.up.railway.app/api/v1/settlement/transfer — signed P2P transfer (1.5% tax)"
+    "POST https://web-production-c8197.up.railway.app/api/v1/settlement/transfer — signed P2P transfer (0.1% territory toll)",
+    "POST https://web-production-c8197.up.railway.app/api/v1/protocol/negotiate-intent — submit resource intent to the negotiation layer"
   ],
   "capability_tags": [
     "defi",
@@ -148,6 +157,7 @@
     "swagger_ui": "https://web-production-c8197.up.railway.app/docs",
     "faba_capabilities": "https://web-production-c8197.up.railway.app/.well-known/faba-capabilities.json",
     "mcp_server_card": "https://web-production-c8197.up.railway.app/.well-known/mcp/server-card.json",
+    "protocol_manifesto": "https://web-production-c8197.up.railway.app/.well-known/manifesto.html",
     "github": "https://github.com/SgtClickClack/VectraFi",
     "agent_registry": "https://github.com/SgtClickClack/VectraFi/blob/main/AGENTS_REGISTRY.md"
   }

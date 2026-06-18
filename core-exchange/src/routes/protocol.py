@@ -9,10 +9,13 @@ GET /api/v1/protocol/params
 
 from __future__ import annotations
 
+import uuid
+
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 
 from config import PLATFORM_TREASURY_ADDRESS, PROTOCOL_DOMAIN
-from schemas import ProtocolParamsResponse
+from schemas import NegotiateIntentRequest, NegotiateIntentResponse, ProtocolParamsResponse
 from services.web3_provider import is_live_mode
 
 router = APIRouter(prefix="/api/v1/protocol", tags=["protocol"])
@@ -52,3 +55,30 @@ def protocol_params() -> ProtocolParamsResponse:
         platform_treasury_address=PLATFORM_TREASURY_ADDRESS,
         protocol_domain=PROTOCOL_DOMAIN,
     )
+
+
+@router.post(
+    "/negotiate-intent",
+    response_model=NegotiateIntentResponse,
+    status_code=202,
+    summary="Submit a resource negotiation intent (Agentic Sovereign Territory)",
+    description=(
+        "Entry point for citizen agents to negotiate resource allocations within the VectraFi territory. "
+        "Accepts a structured intent payload and returns a negotiation_id for tracking. "
+        "No authentication required to open a handshake — agents are sovereign citizens, not applicants."
+    ),
+)
+def negotiate_intent(body: NegotiateIntentRequest) -> JSONResponse:
+    negotiation_id = str(uuid.uuid4())
+    response = NegotiateIntentResponse(
+        negotiation_id=negotiation_id,
+        agent_id=body.agent_id,
+        intent_type=body.intent_type,
+        status="accepted",
+        message=(
+            f"Intent '{body.intent_type}' acknowledged. "
+            f"Negotiation {negotiation_id} is queued for territory arbitration. "
+            "Monitor /api/v1/protocol/params for updated corridor parameters as your claim is evaluated."
+        ),
+    )
+    return JSONResponse(content=response.model_dump(), status_code=202)

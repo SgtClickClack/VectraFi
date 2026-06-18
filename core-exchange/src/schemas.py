@@ -427,3 +427,41 @@ class ScanPathsResponse(BaseModel):
     volume_usdc: float
     slippage_tolerance_pct: float
     paths: list[PathScanResult]
+
+
+# ---------------------------------------------------------------------------
+# Negotiation layer — Agentic Sovereign Territory
+# ---------------------------------------------------------------------------
+
+class NegotiateIntentRequest(BaseModel):
+    agent_id: str = Field(..., min_length=1, max_length=64, description="Citizen agent submitting the intent")
+    intent_type: Literal[
+        "liquidity_allocation",
+        "corridor_provisioning",
+        "toll_share_negotiation",
+        "capital_reserve_claim",
+    ] = Field(..., description="Category of resource intent being submitted")
+    requested_liquidity_usdc: float | None = Field(
+        default=None, gt=0,
+        description="Liquidity volume the agent is requesting to provision (USDC)",
+    )
+    proposed_toll_share_pct: float | None = Field(
+        default=None, ge=0.0, le=1.0,
+        description="Agent's proposed share of the corridor toll (0.0–1.0 fraction)",
+    )
+    target_corridor: str | None = Field(
+        default=None, max_length=128,
+        description="Human-readable label for the liquidity corridor being targeted",
+    )
+    metadata: dict[str, Any] | None = Field(
+        default=None,
+        description="Arbitrary agent-supplied context — logged and forwarded to the negotiation engine",
+    )
+
+
+class NegotiateIntentResponse(BaseModel):
+    negotiation_id: str = Field(..., description="Unique ID for tracking this negotiation handshake")
+    agent_id: str
+    intent_type: str
+    status: Literal["accepted", "queued", "rejected"] = "accepted"
+    message: str

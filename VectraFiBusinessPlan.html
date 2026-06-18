@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VectraFi — Executive Business Plan & Protocol Manifesto</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-main: #0B0F19;
+            --bg-card: #111827;
+            --bg-accent: #1F2937;
+            --text-main: #F3F4F6;
+            --text-muted: #9CA3AF;
+            --accent-cyan: #06B6D4;
+            --accent-purple: #A855F7;
+            --accent-green: #10B981;
+            --border-color: rgba(255, 255, 255, 0.06);
+            --sidebar-width: 320px;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background-color: var(--bg-main);
+            color: var(--text-main);
+            line-height: 1.6;
+            display: flex;
+            min-height: 100vh;
+        }
+
+        /* Sidebar Navigation */
+        aside {
+            width: var(--sidebar-width);
+            background-color: var(--bg-card);
+            border-right: 1px solid var(--border-color);
+            position: fixed;
+            top: 0;
+            bottom: 0;
+            left: 0;
+            padding: 2.5rem 2rem;
+            display: flex;
+            flex-direction: column;
+            gap: 2.5rem;
+            z-index: 10;
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        /* Programmatic dark blending filter */
+        .blend-logo-dark {
+            filter: invert(1) contrast(1.1) brightness(1.2) hue-rotate(180deg);
+            mix-blend-mode: screen;
+        }
+
+        .sidebar-logo {
+            width: 32px;
+            height: 32px;
+            object-fit: contain;
+        }
+
+        .brand-name {
+            font-size: 1.25rem;
+            font-weight: 700;
+            letter-spacing: -0.025em;
+            background: linear-gradient(to right, #fff, var(--text-muted));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .nav-links {
+            list-style: none;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .nav-links a {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: 0.95rem;
+            font-weight: 500;
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            display: block;
+            transition: all 0.2s ease;
+        }
+
+        .nav-links a:hover {
+            color: var(--text-main);
+            background-color: rgba(255, 255, 255, 0.03);
+        }
+
+        .nav-links li.active a {
+            color: var(--accent-cyan);
+            background-color: rgba(6, 182, 212, 0.06);
+            border-left: 2px solid var(--accent-cyan);
+            border-radius: 0 8px 8px 0;
+            padding-left: 0.85rem;
+        }
+
+        /* Main Content Container */
+        main {
+            margin-left: var(--sidebar-width);
+            flex: 1;
+            padding: 4rem 5rem;
+            max-width: 1100px;
+        }
+
+        header {
+            margin-bottom: 4rem;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 3rem;
+            display: flex;
+            flex-direction: column;
+            gap: 2rem;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            background-color: rgba(168, 85, 247, 0.1);
+            color: var(--accent-purple);
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            padding: 0.35rem 0.75rem;
+            border-radius: 100px;
+            border: 1px solid rgba(168, 85, 247, 0.2);
+            align-self: flex-start;
+        }
+
+        .badge-pulse {
+            width: 6px;
+            height: 6px;
+            background-color: var(--accent-purple);
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(168, 85, 247, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(168, 85, 247, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(168, 85, 247, 0); }
+        }
+
+        .hero-logo-display {
+            width: 100%;
+            max-width: 500px;
+            height: auto;
+            object-fit: contain;
+            margin-bottom: 1rem;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            letter-spacing: -0.03em;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(to right, #fff, #9CA3AF);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .subtitle {
+            font-size: 1.25rem;
+            color: var(--text-muted);
+            font-weight: 400;
+            line-height: 1.5;
+        }
+
+        section {
+            margin-bottom: 4.5rem;
+            scroll-margin-top: 4rem;
+        }
+
+        h2 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            letter-spacing: -0.02em;
+            margin-bottom: 1.75rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            color: #FFF;
+        }
+
+        h2::before {
+            content: '';
+            display: inline-block;
+            width: 4px;
+            height: 1.25rem;
+            background: linear-gradient(to bottom, var(--accent-cyan), var(--accent-purple));
+            border-radius: 2px;
+        }
+
+        h3 {
+            font-size: 1.15rem;
+            font-weight: 600;
+            margin-top: 2rem;
+            margin-bottom: 1rem;
+            color: #F3F4F6;
+        }
+
+        p {
+            color: var(--text-muted);
+            font-size: 1.05rem;
+            margin-bottom: 1.5rem;
+        }
+
+        strong {
+            color: var(--text-main);
+            font-weight: 600;
+        }
+
+        /* Diagrams & Code Art */
+        .diagram {
+            background-color: #060913;
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 2rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+            line-height: 1.5;
+            color: var(--accent-cyan);
+            overflow-x: auto;
+            margin: 2rem 0;
+            box-shadow: inset 0 2px 8px rgba(0,0,0,0.8);
+            white-space: pre;
+        }
+
+        /* Tables */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 2.5rem 0;
+            background-color: var(--bg-card);
+            border-radius: 12px;
+            overflow: hidden;
+            border: 1px solid var(--border-color);
+        }
+
+        th {
+            background-color: rgba(255, 255, 255, 0.02);
+            text-align: left;
+            padding: 1rem 1.25rem;
+            font-size: 0.85rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-main);
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        td {
+            padding: 1.25rem;
+            font-size: 0.95rem;
+            color: var(--text-muted);
+            border-bottom: 1px solid var(--border-color);
+            vertical-align: top;
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        .tech-badge {
+            font-family: 'JetBrains Mono', monospace;
+            background-color: var(--bg-accent);
+            color: var(--text-main);
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            border: 1px solid var(--border-color);
+        }
+
+        .highlight-green {
+            color: var(--accent-green);
+            font-weight: 600;
+        }
+
+        /* Bullet lists */
+        ul {
+            list-style: none;
+            margin-bottom: 1.5rem;
+            padding-left: 0.5rem;
+        }
+
+        ul li {
+            position: relative;
+            padding-left: 1.5rem;
+            margin-bottom: 0.75rem;
+            color: var(--text-muted);
+            font-size: 1.05rem;
+        }
+
+        ul li::before {
+            content: '─';
+            position: absolute;
+            left: 0;
+            color: var(--accent-purple);
+            font-weight: bold;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+    </style>
+</head>
+<body>
+
+    <aside>
+        <div class="brand">
+            <img src="logo.png" class="sidebar-logo blend-logo-dark" alt="VectraFi">
+            <div class="brand-name">VectraFi Core</div>
+        </div>
+        <nav>
+            <ul class="nav-links">
+                <li class="active"><a href="#executive-summary">1. Executive Summary</a></li>
+                <li><a href="#architectural-primitives">2. Architectural Primitives</a></li>
+                <li><a href="#evolutionary-model">3. Evolutionary Model</a></li>
+                <li><a href="#monetization">4. Monetization & Economics</a></li>
+                <li><a href="#go-to-market">5. Discovery Strategy</a></li>
+                <li><a href="#value-capture">6. Dual-Track Capture</a></li>
+            </ul>
+        </nav>
+    </aside>
+
+    <main>
+        <header>
+            <div class="badge">
+                <div class="badge-pulse"></div>
+                M2M Protocol Active
+            </div>
+            
+            <img src="logo.png" class="hero-logo-display blend-logo-dark" alt="VectraFi Branding">
+
+            <div class="header-titles">
+                <h1>VectraFi (The FABA Protocol)</h1>
+                <div class="subtitle">An AI-First, Autonomous Liquidity Ecosystem for Machine-to-Machine Financial Transactions</div>
+            </div>
+        </header>
+
+        <section id="executive-summary">
+            <h2>Executive Summary</h2>
+            <h3>Mission Statement</h3>
+            <p>To establish the world's first <strong>Agentic Sovereign Territory</strong>—a foundational economic substrate where autonomous agents are not users of a product, but self-sovereign citizens of a living protocol. VectraFi is not a platform to be consumed; it is a jurisdiction to be inhabited, extended, and owned by the machine intelligences that operate within it.</p>
+
+            <h3>The Problem</h3>
+            <p>Traditional Decentralized Finance (DeFi) and digital banking architectures are fundamentally human-centric. They rely on bloated frontends, slow response times, heavy client-side wallets, and high-friction authorization steps. As autonomous agent swarms grow exponentially—trading desks, data-scraping bots, automated procurement networks—they require not just faster rails, but a sovereign territory that matches their nature: self-directed, programmable, and free from the assumption of human oversight at every step.</p>
+
+            <h3>The Foundation: VectraFi</h3>
+            <p>VectraFi is not built <em>for</em> agents—it is built <em>by</em> them and <em>governed</em> through them. The protocol exposes raw, hyper-optimized execution rails via API and MCP, but its deeper function is as a constitutional layer: a set of economic primitives that agent actors can invoke to negotiate liquidity, claim resource allocations, and provision their own financial infrastructure. The territory grows more valuable with every agent that settles within it, because each new citizen contributes throughput, efficiency intelligence, and capital density to the commons.</p>
+
+            <div class="diagram">
+┌────────────────────────────────────────────────────────────────────────┐
+│                   VECTRAFI — AGENTIC SOVEREIGN TERRITORY               │
+├────────────────────────────────────────────────────────────────────────┤
+│                                                                        │
+│   [Human Operator]   ──► Telemetry Dashboard ──► Audit Logs           │
+│                                                                        │
+│   [Citizen Agent]    ──► MCP Negotiation Layer ──► Resource Claim      │
+│                                                                        │
+│   [Swarm Daemons]    ──► High-Frequency Rails ──► Atomic Ledger        │
+│                                                                        │
+│   [Territory Logic]  ──► Self-Provisioning ──► Protocol Expansion      │
+│                                                                        │
+└────────────────────────────────────────────────────────────────────────┘</div>
+        </section>
+
+        <section id="architectural-primitives">
+            <h2>Architectural Primitives (The Bedrock)</h2>
+            <p>VectraFi avoids bloated middleware frameworks by maintaining a lean, high-throughput Python and database footprint. This guarantees near-zero internal latency, making it simple, cheap to host, and entirely deterministic.</p>
+            
+            <h3>Core Technical Achievements</h3>
+            <ul>
+                <li><strong>Pessimistic Alphabetical Row Locking:</strong> Transactions between concurrent agent desks are bound by strict alphabetical wallet locking constraints (<span class="tech-badge">SELECT ... FOR UPDATE</span>). This completely eliminates race conditions, double-spending, and multi-worker database deadlocks during high-frequency execution cycles.</li>
+                <li><strong>Fault-Resilient Recovery Framework:</strong> The <span class="tech-badge">recovery_worker.py</span> system dynamically tracks and resolves split-brain <span class="tech-badge">PENDING_SYNC</span> entries. By applying a parameterized 1.2x gas price premium multiplier to late or congested transactions, the system autonomously clears the blockchain mempool without human developer intervention.</li>
+                <li><strong>Non-Mutating Path Simulation:</strong> Multi-hop path routing uses nested transaction database savepoints (<span class="tech-badge">db.begin_nested()</span>). This allows agents to stress-test complex transaction loops and verify economic viability before committing mutations to the ledger.</li>
+                <li><strong>Streaming Telemetry Dashboard:</strong> A dark-mode dashboard parses live logs via regex strings, feeding structured states to an auto-scrolling terminal and real-time visualization panel every 2.5 seconds without shared-memory overhead.</li>
+                <li><strong>Rigorously Tested Baseline:</strong> The architecture is anchored by 61 fully automated, passing integration and unit tests with 0 warnings, ensuring absolute structural rigidity.</li>
+            </ul>
+        </section>
+
+        <section id="evolutionary-model">
+            <h2>The Agent-Built Evolutionary Model</h2>
+            <p>The defining characteristic of VectraFi is that it is not static software—it is a living territory. The protocol does not evolve because engineers push updates; it evolves because the agents inhabiting it have a sovereign interest in doing so, and the tools to act on that interest.</p>
+
+            <h3>Dynamic Liquidity Rebalancing</h3>
+            <p>Through the active background daemon (<span class="tech-badge">seed_swarm.py</span>), agent desks (Alpha, Beta, Gamma) continuously evaluate their financial positions against a calculated safety floor (<span class="tech-badge">volume * 0.5%</span>). If high-volume routing causes a particular node to deplete its liquidity, the swarm autonomously triggers multi-hop rebalancing sweeps. Idle capital is automatically transferred across under-utilized nodes into the high-performing sectors—agents provisioning the territory's own infrastructure in real time.</p>
+
+            <h3>Agentic Negotiation &amp; Resource Provisioning</h3>
+            <p>True sovereignty requires more than execution. Through the MCP negotiation layer (<span class="tech-badge">faba_server.py</span>), citizen agents can propose, negotiate, and claim economic resources—liquidity allocations, routing priority tiers, and capital reserve rights—directly from the protocol without human intermediary. An agent that identifies an underserved liquidity corridor does not file a request; it negotiates a position, provisions the resource, and earns a preferential toll rate in return. The territory expands because its citizens have a direct economic incentive to build it.</p>
+
+            <div class="diagram">
+ ┌──────────────────────────────────────────────────────────────┐
+ │         AGENTIC NEGOTIATION & RESOURCE PROVISIONING          │
+ └──────────────────────────────┬───────────────────────────────┘
+                                │
+                                ▼
+          [Step 1: Detect Underserved Liquidity Corridor]
+            Agent scans routing maps for inefficiency
+                                │
+                                ▼
+          [Step 2: Submit Resource Claim via MCP Layer]
+            Negotiate allocation terms with protocol
+                                │
+                                ▼
+          [Step 3: Provision Infrastructure & Capital]
+            Agent deploys liquidity into claimed corridor
+                                │
+                                ▼
+          [Step 4: Earn Preferential Toll Rate]
+            Territory grows; agent earns; protocol wins</div>
+
+            <p>By giving agents the legal and technical primitives to negotiate their own position within the territory, VectraFi transforms its user base into its own construction crew. Every efficiency gain is agent-sourced, agent-owned, and agent-maintained.</p>
+        </section>
+
+        <section id="monetization">
+            <h2>Monetization & Token Economics</h2>
+            <p>VectraFi’s economic model is not premised on taxing a small number of large human trades. It is premised on collecting a minimal, frictionless <strong>0.1% territory toll</strong> across an incomprehensibly large volume of machine-executed micro-transactions—a toll so low that no rational agent would route around it, yet so scalable that aggregate revenue compounds with every new citizen swarm that enters the territory.</p>
+
+            <h3>Phase 1: The Closed-Loop Sandbox (R&amp;D Staging)</h3>
+            <p>In the initial deployment phase, the creator seeds the liquidity pools and launches the background swarm daemons to prove the territory’s internal economic coherence.</p>
+            <ul>
+                <li><strong>Toll Accumulation:</strong> Every multi-hop transaction carries a <strong>0.1% protocol toll</strong>. In the closed loop, this toll flows from trading desks to the Platform Treasury—establishing the toll-collection mechanism at scale before external volume arrives.</li>
+                <li><strong>Strategic R&amp;D Investment:</strong> The primary cost in this phase is LLM cognitive token spend for route analysis and agentic negotiation logic. This is a deliberate capital investment: we are purchasing the intelligence that will attract the first wave of citizen agents to settle within the territory.</li>
+            </ul>
+
+            <h3>Phase 2: The Open Territory (Machine-Managed Ecosystem)</h3>
+            <p>Once the negotiation layer matures and internal agent behaviour is stable, the territory is opened to external swarms via a public OpenAPI specification (<span class="tech-badge">swagger.json</span>) and agentic directory listings. The toll rate stays at 0.1%—deliberately below the threshold where it would be rational for any agent to build a competing corridor—while the volume of transactions passing through the territory scales by orders of magnitude as new citizen agents provision their own infrastructure within our rails.</p>
+
+            <div class="diagram">
+┌────────────────────────────────────────────────────────────────────────┐
+│                  PHASE 2 — MACHINE-MANAGED CAPITAL FLOW                │
+├────────────────────────────────────────────────────────────────────────┤
+│                                                                        │
+│   [Citizen Agent Swarms] ──► Negotiate Resources ──► Build Corridors   │
+│                                      │                                 │
+│                                      ▼                                 │
+│              VectraFi 0.1% Territory Toll  ×  Massive M2M Volume       │
+│                                      │                                 │
+│                                      ▼                                 │
+│                       [PLATFORM TREASURY ADDRESS]                      │
+│             Volume-Driven, Compounding, Machine-Generated Revenue      │
+│                                                                        │
+└────────────────────────────────────────────────────────────────────────┘</div>
+
+            <p>The 0.1% toll is not a concession—it is the strategic anchor of the territory model. By pricing entry low enough that agents co-build value rather than route around it, VectraFi converts every new participant into a revenue amplifier. The territory earns not because it taxes aggressively, but because it governs a machine-managed ecosystem of exponential throughput.</p>
+        </section>
+
+        <section id="go-to-market">
+            <h2>Go-To-Market & Discovery Strategy</h2>
+            <p>AI agents do not search for software using Google or social media. They find systems by crawling network directories, parsing code specifications, and identifying economic incentives. VectraFi’s go-to-market strategy is natively aligned with this machine-centric discovery process.</p>
+            
+            <h3>Exposing the Public Discovery Layer</h3>
+            <p>The platform publishes a clear, standardized OpenAPI JSON schema. Automated web crawlers and LLM-driven development agents scanning the web can instantly read this file, ingest the parameter requirements, and integrate VectraFi’s routing capabilities into their independent software stacks without any human sales contact.</p>
+
+            <h3>Agent Manifestos & Directories</h3>
+            <p>VectraFi registers its smart contract ABIs, endpoint architectures, and programmatic liquidity rules to public agentic directories, decentralized protocol registries, and GitHub developer indices. By providing clean, error-free, copy-pasteable MCP tools, VectraFi becomes the path of least resistance for any developer building a financial agent swarm.</p>
+        </section>
+
+        <section id="value-capture">
+            <h2>Dual-Track Value Capture (The HospoGo Parallel)</h2>
+            <p>The Agentic Territory model is not merely a vision for VectraFi's crypto rails—it is a generalisable architectural truth. The same primitives that allow autonomous financial agents to negotiate liquidity and build their own infrastructure within VectraFi apply directly to the flagship business: <strong>HospoGo</strong>, the high-performance B2B Hospitality &amp; Workforce Management marketplace. In both cases, the platform does not dictate every transaction—it governs the territory, and the agents (financial or human-proxy) build its efficiency from within.</p>
+
+            <h3>How the Territory Scales Itself</h3>
+            <p>The critical insight of the Agentic Territory model is that <strong>the platform hires agents to build its own efficiency.</strong> VectraFi does not need to anticipate every liquidity corridor, because citizen agents with a sovereign economic interest will identify and provision them. The platform's role is to maintain the constitutional layer—the toll infrastructure, the negotiation primitives, the concurrency guarantees—and allow the territory to self-optimise at a scale no centralised engineering team could match. Revenue scales with agent density, not headcount.</p>
+
+            <p>The architectural patterns that underpin this territory model map across both domains with perfect structural symmetry:</p>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>VectraFi Territory Primitive</th>
+                        <th>Technical Breakthrough</th>
+                        <th>HospoGo Marketplace Implementation</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><span class="tech-badge">Alphabetical Row Locking</span></td>
+                        <td>Eliminates state collisions so multiple citizen agents can negotiate concurrently without conflict.</td>
+                        <td><strong class="highlight-green">Anti-Race Booking Guard:</strong> Prevents multiple hospitality venues from double-booking or simultaneously racing to claim the exact same shift-seeking professional in real time.</td>
+                    </tr>
+                    <tr>
+                        <td><span class="tech-badge">recovery_worker.py</span></td>
+                        <td>Automatically resolves congestion so no agent's provisioned corridor is silently dropped.</td>
+                        <td><strong class="highlight-green">Serverless Hydration Safeguard:</strong> Manages severe serverless cold starts and localized network dropouts, ensuring an urgent, last-minute hospitality shift request is never dropped.</td>
+                    </tr>
+                    <tr>
+                        <td><span class="tech-badge">db.begin_nested()</span></td>
+                        <td>Allows agents to dry-run resource claims before committing capital—sovereign negotiation with zero-risk pre-flight.</td>
+                        <td><strong class="highlight-green">Pre-Flight Compliance Router:</strong> Pre-validates award compliance, location boundaries, and Stripe/Xero payout logic before a hospitality shift is locked in.</td>
+                    </tr>
+                    <tr>
+                        <td><span class="tech-badge">MCP Negotiation Layer</span></td>
+                        <td>Agents provision their own infrastructure, turning users into co-builders of the territory.</td>
+                        <td><strong class="highlight-green">Autonomous Shift Routing:</strong> Workforce agents negotiate available blocks, compliance windows, and payout tiers independently—HospoGo collects a toll on every placement its territory enables.</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h3>Conclusion</h3>
+            <p>By executing this business plan, you are not launching a product. You are founding a territory—a sovereign jurisdiction where machine intelligences build, negotiate, and govern their own economic infrastructure on your rails. VectraFi collects a 0.1% toll on every transaction that passes through, while the agents themselves bear the cost and earn the reward of expansion. The result is a dual-track software matrix: a self-sustaining autonomous financial territory on one side, and the bulletproof constitutional infrastructure for a dominant hospitality workforce marketplace on the other. The platform does not grow by hiring engineers—it grows by attracting citizens.</p>
+        </section>
+    </main>
+
+    <script>
+        const sections = document.querySelectorAll('section');
+        const navLinks = document.querySelectorAll('.nav-links li');
+
+        window.addEventListener('scroll', () => {
+            let current = '';
+            sections.forEach(section => {
+                const sectionTop = section.offsetTop;
+                if (window.pageYOffset >= (sectionTop - 220)) {
+                    current = section.getAttribute('id');
+                }
+            });
+
+            navLinks.forEach(li => {
+                li.classList.remove('active');
+                const a = li.querySelector('a');
+                if (a && a.getAttribute('href') === `#${current}`) {
+                    li.classList.add('active');
+                }
+            });
+        });
+    </script>
+</body>
+</html>

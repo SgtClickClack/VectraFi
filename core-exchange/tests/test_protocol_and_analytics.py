@@ -20,7 +20,8 @@ from conftest import _TestSessionLocal, make_agent, sign_body
 from models import SettlementTransaction
 
 
-_PROTOCOL_URL   = "/api/v1/protocol/params"
+_PROTOCOL_URL       = "/api/v1/protocol/params"
+_NEGOTIATE_URL      = "/api/v1/protocol/negotiate-intent"
 _BREAKDOWN_URL  = "/api/v1/analytics/treasury-breakdown"
 _SWARM_URL      = "/api/v1/analytics/swarm"
 _HEARTBEAT_URL  = "/api/v1/analytics/swarm/heartbeat"
@@ -187,3 +188,47 @@ def test_stats_endpoint_no_regression(client):
     assert "total_volume_processed_usdc"  in d
     assert "avg_latency_ms"               in d
     assert d["success_rate_pct"]          == pytest.approx(100.0)
+
+
+# ---------------------------------------------------------------------------
+# 8. negotiate-intent — 202 handshake with negotiation_id
+# ---------------------------------------------------------------------------
+
+def test_negotiate_intent_returns_202(client):
+    body = {
+        "agent_id": "test-citizen-agent",
+        "intent_type": "liquidity_allocation",
+        "requested_liquidity_usdc": 500.0,
+        "target_corridor": "Alpha-Beta liquidity corridor",
+    }
+    resp = client.post(_NEGOTIATE_URL, json=body)
+    assert resp.status_code == 202, resp.text
+    d = resp.json()
+    assert d["agent_id"]   == "test-citizen-agent"
+    assert d["intent_type"] == "liquidity_allocation"
+    assert d["status"]      == "accepted"
+    assert len(d["negotiation_id"]) == 36  # UUID4 length
+
+
+def test_negotiate_intent_corridor_provisioning(client):
+    body = {
+        "agent_id": "swarm-beta",
+        "intent_type": "corridor_provisioning",
+        "proposed_toll_share_pct": 0.3,
+        "target_corridor": "Beta-Gamma express lane",
+        "metadata": {"priority": "high", "deployment_wave": 2},
+    }
+    resp = client.post(_NEGOTIATE_URL, json=body)
+    assert resp.status_code == 202, resp.text
+    d = resp.json()
+    assert d["status"] == "accepted"
+    assert "negotiation_id" in d
+
+
+def test_negotiate_intent_rejects_invalid_intent_type(client):
+    body = {
+        "agent_id": "rogue-agent",
+        "intent_type": "invalid_type",
+    }
+    resp = client.post(_NEGOTIATE_URL, json=body)
+    assert resp.status_code == 422
