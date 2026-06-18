@@ -1,5 +1,6 @@
 import json
 import sys
+import time
 from pathlib import Path
 from uuid import uuid4
 
@@ -12,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "core-exchange" / "src"
 sys.path.insert(0, str(SRC))
 
+from config import PROTOCOL_DOMAIN  # noqa: E402
 from main import app  # noqa: E402
 
 
@@ -38,6 +40,9 @@ def _signed_rebalance(client: TestClient, wallet: dict, target_allocations: dict
         {
             "agent_id": wallet["agent_id"],
             "wallet_address": wallet["wallet_address"],
+            "nonce": uuid4().hex,
+            "issued_at": int(time.time()),
+            "chain_id": PROTOCOL_DOMAIN,
             "target_allocations": target_allocations,
         },
         wallet["private_key"],
@@ -98,6 +103,9 @@ def test_rebalance_requires_signature_header():
             {
                 "agent_id": wallet["agent_id"],
                 "wallet_address": wallet["wallet_address"],
+                "nonce": uuid4().hex,
+                "issued_at": int(time.time()),
+                "chain_id": PROTOCOL_DOMAIN,
                 "target_allocations": {"USDC": 1.0},
             },
             separators=(",", ":"),
