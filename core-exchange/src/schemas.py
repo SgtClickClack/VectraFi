@@ -288,6 +288,7 @@ class ArbitrageRouteResponse(BaseModel):
     steps: list[ArbitrageStepResult]
     total_slippage_usdc: float
     expected_output_usdc: float
+    expected_output_native: float = 0.0  # output in exit_asset units; equals expected_output_usdc when exit_asset == "USDC"
     rejection_reason: str | None = None
 
 

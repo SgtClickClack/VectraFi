@@ -38,6 +38,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models import AgentWallet, SettlementTransaction
+from services.pricing import get_active_prices
 from schemas import (
     ArbitrageRouteRequest,
     ArbitrageRouteResponse,
@@ -201,10 +202,30 @@ def arbitrage_route_path(
         db, chain, payload.volume_usdc, payload.slippage_tolerance_pct,
     )
 
+    # Compute native-asset output using cached spot prices.
+    # expected_output_usdc stays USDC-denominated (simulation invariant).
+    # expected_output_native expresses the same value in exit_asset units.
+    prices          = get_active_prices()
+    entry_price_usd = Decimal(str(prices.get(payload.entry_asset, 1.0)))
+    exit_price_usd  = Decimal(str(prices.get(payload.exit_asset,  1.0)))
+
+    if exit_price_usd == Decimal("0"):
+        conversion_factor = Decimal("1")
+    else:
+        conversion_factor = (entry_price_usd / exit_price_usd).quantize(
+            Decimal("0.00000001")
+        )
+
+    expected_out_native = float(
+        Decimal(str(expected_out)) * conversion_factor
+    )
+
     logger.info(
         "Arbitrage route-path dry-run: viable=%s agents=%d volume=%.4f "
-        "total_slip=%.4f reason=%s",
-        viable, len(chain), payload.volume_usdc, total_slip, rejection,
+        "total_slip=%.4f entry=%s exit=%s factor=%.8f reason=%s",
+        viable, len(chain), payload.volume_usdc, total_slip,
+        payload.entry_asset, payload.exit_asset,
+        float(conversion_factor), rejection,
     )
 
     return ArbitrageRouteResponse(
@@ -217,6 +238,7 @@ def arbitrage_route_path(
         steps=steps,
         total_slippage_usdc=total_slip,
         expected_output_usdc=expected_out,
+        expected_output_native=expected_out_native,
         rejection_reason=rejection,
     )
 
