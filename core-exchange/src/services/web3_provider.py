@@ -1,4 +1,5 @@
 import logging
+import sys
 from typing import Any
 
 from web3 import Web3
@@ -35,12 +36,17 @@ def init_web3_provider() -> None:
             RPC_PROVIDER_URL,
         )
     except Exception as exc:
-        _web3 = None
-        _live_mode = False
-        logger.warning(
-            "Web3 provider initialization failed — falling back to sandbox mode: %s",
+        # RPC_PROVIDER_URL was explicitly set but the connection failed.
+        # Silently falling back to sandbox mode here would allow the swarm to
+        # run with mock balances and a disabled gas guard — a silent fund-drain
+        # risk in production.  Hard-exit instead so the failure is unmistakable.
+        logger.critical(
+            "FATAL: RPC_PROVIDER_URL is set (%s) but the Web3 provider could not "
+            "connect — refusing to fall back to sandbox mode: %s",
+            RPC_PROVIDER_URL,
             exc,
         )
+        sys.exit(1)
 
 
 def is_live_mode() -> bool:
