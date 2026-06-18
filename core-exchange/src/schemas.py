@@ -310,3 +310,11 @@ class SwarmAnalyticsResponse(BaseModel):
     route_checks: int | None = None
     viable_routes: int | None = None
     last_activity: str | None = None
+
+
+class SwarmHeartbeatRequest(BaseModel):
+    iterations: int
+    route_checks: int
+    viable_routes: int
+    dry_run: bool = False
+    desks: list[SwarmDeskState]

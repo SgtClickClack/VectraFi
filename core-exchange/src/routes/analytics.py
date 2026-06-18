@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from collections import deque
 from decimal import Decimal
 from pathlib import Path
@@ -34,6 +35,7 @@ from schemas import (
     RecentTransactionItem,
     SwarmAnalyticsResponse,
     SwarmDeskState,
+    SwarmHeartbeatRequest,
 )
 
 logger = logging.getLogger("vectrafi.analytics")
@@ -172,6 +174,15 @@ _SWARM_LOG = (
 _TAIL_READ   = 100   # lines scanned for state parsing
 _TAIL_RETURN = 30    # lines returned to the UI terminal
 
+# ---------------------------------------------------------------------------
+# In-memory swarm heartbeat store — populated by POST /swarm/heartbeat.
+# Allows a swarm running anywhere (locally or on Railway) to push its state
+# to the dashboard without relying on a shared log file.
+# ---------------------------------------------------------------------------
+_heartbeat: SwarmAnalyticsResponse | None = None
+_heartbeat_ts: float = 0.0
+_HEARTBEAT_TTL = 90.0   # seconds; beyond this the swarm is considered stopped
+
 _RE_DESK  = re.compile(
     r"DESK\s+(\w+)\s+balance=([\d.]+)\s+USDC\s+ok=(\d+)\s+err=(\d+)"
 )
@@ -192,13 +203,41 @@ def _tail_log(path: Path, n: int) -> list[str]:
     return list(buf)
 
 
+@router.post("/swarm/heartbeat", response_model=SwarmAnalyticsResponse, include_in_schema=False)
+def swarm_heartbeat(body: SwarmHeartbeatRequest) -> SwarmAnalyticsResponse:
+    """
+    Accepts a push heartbeat from seed_swarm.py (wherever it runs).
+    Stored in memory; read by GET /swarm with a 90-second TTL.
+    """
+    global _heartbeat, _heartbeat_ts
+    _heartbeat = SwarmAnalyticsResponse(
+        swarm_active=True,
+        log_lines=[],
+        desks=body.desks,
+        iterations=body.iterations,
+        route_checks=body.route_checks,
+        viable_routes=body.viable_routes,
+        last_activity=time.strftime("%H:%M:%S", time.localtime()),
+    )
+    _heartbeat_ts = time.monotonic()
+    return _heartbeat
+
+
 @router.get("/swarm", response_model=SwarmAnalyticsResponse)
 def analytics_swarm() -> SwarmAnalyticsResponse:
     """
-    Tail-reads swarm_activity.log and returns parsed desk states plus the last
-    30 raw log lines for the live terminal view in the telemetry dashboard.
-    Returns an empty/inactive response when the log file does not yet exist.
+    Returns current swarm state. Checks the push-heartbeat store first
+    (populated by seed_swarm.py via POST /swarm/heartbeat); falls back to
+    tail-reading swarm_activity.log for swarms started via the dashboard button.
+    Returns an inactive response when neither source has data.
     """
+    # Prefer push-based heartbeat (works for both local and remote swarms)
+    if _heartbeat is not None:
+        age = time.monotonic() - _heartbeat_ts
+        if age <= _HEARTBEAT_TTL:
+            return _heartbeat
+        # Heartbeat expired — swarm has stopped; fall through to log
+
     if not _SWARM_LOG.exists():
         return SwarmAnalyticsResponse(
             swarm_active=False,

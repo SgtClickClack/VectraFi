@@ -18,7 +18,9 @@ Usage (exchange server must be running):
     python core-exchange/src/seed_swarm.py           # terminal B
 
 Environment overrides:
-    SWARM_API_BASE       — default http://127.0.0.1:8000
+    VECTRAFI_API_URL     — canonical API base; used by both swarm and stress runner
+    SWARM_API_BASE       — overrides VECTRAFI_API_URL for this script only (legacy compat)
+                           default http://127.0.0.1:8000
     SWARM_DRY_RUN        — set to "1" to skip real transfers (dry-run polling only)
     SWARM_POLL_MS        — polling interval in milliseconds (default 1000)
 """
@@ -51,7 +53,11 @@ from config import DEFAULT_USDC_BALANCE, PROTOCOL_DOMAIN
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-_API_BASE    = os.getenv("SWARM_API_BASE", "http://127.0.0.1:8000").rstrip("/")
+_API_BASE    = (
+    os.getenv("SWARM_API_BASE")
+    or os.getenv("VECTRAFI_API_URL")
+    or "http://127.0.0.1:8000"
+).rstrip("/")
 _DRY_RUN     = os.getenv("SWARM_DRY_RUN", "0") == "1"
 _POLL_MS     = int(os.getenv("SWARM_POLL_MS", "1000"))
 _JITTER_MIN  = 0.050   # 50 ms
@@ -350,6 +356,37 @@ async def maybe_rebalance(
 # Main swarm loop
 # ---------------------------------------------------------------------------
 
+async def _post_heartbeat(
+    client: httpx.AsyncClient,
+    desks:  list[DeskState],
+    stats:  SwarmStats,
+) -> None:
+    """Push swarm state to the dashboard's in-memory store (fire-and-forget)."""
+    body = {
+        "iterations":    stats.iterations,
+        "route_checks":  stats.route_checks,
+        "viable_routes": stats.viable_routes,
+        "dry_run":       _DRY_RUN,
+        "desks": [
+            {
+                "name":          d.name,
+                "balance_usdc":  d.balance_usdc,
+                "transfers_ok":  d.transfers_ok,
+                "transfers_err": d.transfers_err,
+            }
+            for d in desks
+        ],
+    }
+    try:
+        await client.post(
+            f"{_API_BASE}/api/v1/analytics/swarm/heartbeat",
+            json=body,
+            timeout=httpx.Timeout(3.0),
+        )
+    except Exception as exc:
+        log.debug("HEARTBEAT  send failed (non-fatal): %s", exc)
+
+
 async def swarm_loop(desks: list[DeskState]) -> None:
     stats = SwarmStats()
     poll_s = _POLL_MS / 1000.0
@@ -395,6 +432,7 @@ async def swarm_loop(desks: list[DeskState]) -> None:
                         "  DESK  %-7s  balance=%.4f USDC  ok=%d  err=%d",
                         d.name, d.balance_usdc, d.transfers_ok, d.transfers_err,
                     )
+                await _post_heartbeat(client, desks, stats)
 
             # 5. Sleep for the remainder of the poll interval
             elapsed = time.perf_counter() - loop_start
