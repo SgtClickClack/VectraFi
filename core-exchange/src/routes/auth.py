@@ -173,7 +173,7 @@ async def verify_signed_payload(request: Request, db: Session, model: type[T]) -
     except ValidationError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=exc.errors(),
+            detail=exc.errors(include_context=False),
         ) from exc
 
     logger.info(
