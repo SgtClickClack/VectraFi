@@ -97,6 +97,20 @@ _CB_MIN_BALANCE_PCT:        float = float(os.getenv("SWARM_CB_MIN_BALANCE_PCT", 
 # ~0.002 ETH ≈ 300k gas units on Base Sepolia; env-overridable via SWARM_CB_MIN_GAS_ETH.
 _CB_MIN_GAS_ETH:            float = float(os.getenv("SWARM_CB_MIN_GAS_ETH",    "0.002"))
 
+# ---------------------------------------------------------------------------
+# Autonomous desk equalization thresholds (env-overridable)
+# ---------------------------------------------------------------------------
+# A desk whose USDC balance falls below _EQ_STALL_THRESHOLD_USDC is considered
+# stalled and will receive a direct top-up from the richest eligible donor desk
+# before the next routing iteration begins.  The donor must hold enough surplus
+# to bring the stalled desk to _EQ_TARGET_USDC while staying above that target
+# itself, AND must have a cached ETH balance of at least
+# _CB_MIN_GAS_ETH * _EQ_GAS_SAFETY_MULT so the equalization transfer itself
+# cannot drain the donor's gas cushion below the circuit-breaker floor.
+_EQ_STALL_THRESHOLD_USDC: float = float(os.getenv("SWARM_EQ_STALL_USDC", str(_TRANSFER_AMOUNT * 3)))
+_EQ_TARGET_USDC:          float = float(os.getenv("SWARM_EQ_TARGET_USDC", str(_TRANSFER_AMOUNT * 10)))
+_EQ_GAS_SAFETY_MULT:      float = float(os.getenv("SWARM_EQ_GAS_MULT",    "2.0"))
+
 # Agent identities — fixed prefix so re-runs reuse existing wallets (409 = ok).
 _DESK_NAMES = ("Alpha", "Beta", "Gamma")
 
@@ -137,6 +151,7 @@ class DeskState:
     transfers_ok:        int = 0
     transfers_err:       int = 0
     consecutive_errors:  int = 0       # reset on success; circuit-breaker trips at threshold
+    eth_balance:         float = 0.0   # cached by _check_gas_guard; used by equalization donor vetting
 
 
 @dataclass
@@ -316,21 +331,31 @@ async def check_route(
 # ---------------------------------------------------------------------------
 
 async def fire_transfer(
-    client:   httpx.AsyncClient,
-    sender:   DeskState,
-    receiver: DeskState,
-    stats:    SwarmStats,
+    client:          httpx.AsyncClient,
+    sender:          DeskState,
+    receiver:        DeskState,
+    stats:           SwarmStats,
+    amount_override: float | None = None,
 ) -> None:
-    # Organic jitter: simulate different desk reaction times
-    jitter = random.uniform(_JITTER_MIN, _JITTER_MAX)
-    await asyncio.sleep(jitter)
+    """Execute one signed settlement transfer.
+
+    amount_override: when supplied (equalization path), use this exact USDC
+    amount and skip organic jitter — the transfer is deliberate, not simulated
+    trading activity.  When None, uses _TRANSFER_AMOUNT with jitter (normal hop).
+    """
+    transfer_amount = amount_override if amount_override is not None else _TRANSFER_AMOUNT
+    tx_type         = "swarm_equalization" if amount_override is not None else "swarm_transfer"
+
+    # Skip jitter for equalization transfers; add it for organic trading hops.
+    if amount_override is None:
+        await asyncio.sleep(random.uniform(_JITTER_MIN, _JITTER_MAX))
 
     body = {
         "agent_id":       sender.agent_id,
         "wallet_address": sender.wallet_address,
         "receiver_id":    receiver.agent_id,
-        "amount_usdc":    _TRANSFER_AMOUNT,
-        "tx_type":        "swarm_transfer",
+        "amount_usdc":    transfer_amount,
+        "tx_type":        tx_type,
         "nonce":          str(uuid.uuid4()),
         "issued_at":      int(time.time()),
         "chain_id":       PROTOCOL_DOMAIN,
@@ -358,9 +383,9 @@ async def fire_transfer(
             sender.transfers_ok      += 1
             sender.consecutive_errors = 0   # clear streak on success
             log.info(
-                "TRANSFER  %-7s → %-7s  $%5.2f  %5.0fms  OK  "
+                "TRANSFER  %-7s → %-7s  $%5.2f  %5.0fms  OK  [%s]  "
                 "sender_bal=%.2f  receiver_bal=%.2f",
-                sender.name, receiver.name, _TRANSFER_AMOUNT, elapsed_ms,
+                sender.name, receiver.name, transfer_amount, elapsed_ms, tx_type,
                 sender.balance_usdc, receiver.balance_usdc,
             )
         else:
@@ -368,9 +393,9 @@ async def fire_transfer(
             sender.transfers_err      += 1
             sender.consecutive_errors += 1
             log.warning(
-                "TRANSFER  %-7s → %-7s  $%5.2f  %5.0fms  ERR  HTTP %d: %s  "
+                "TRANSFER  %-7s → %-7s  $%5.2f  %5.0fms  ERR  [%s]  HTTP %d: %s  "
                 "(consecutive_errors=%d)",
-                sender.name, receiver.name, _TRANSFER_AMOUNT, elapsed_ms,
+                sender.name, receiver.name, transfer_amount, elapsed_ms, tx_type,
                 resp.status_code, resp.text[:100], sender.consecutive_errors,
             )
 
@@ -425,6 +450,75 @@ async def maybe_rebalance(
         log.warning("REBALANCE  %-7s  RPC_TIMEOUT: %s", desk.name, exc)
     except Exception as exc:
         log.error("REBALANCE  %-7s  UNEXPECTED: %s", desk.name, exc)
+
+
+# ---------------------------------------------------------------------------
+# Autonomous desk equalization
+# ---------------------------------------------------------------------------
+
+async def _equalize_stalled_desks(
+    client: httpx.AsyncClient,
+    desks:  list[DeskState],
+    stats:  SwarmStats,
+) -> None:
+    """
+    Pre-iteration capital equalization pass.
+
+    For each desk below _EQ_STALL_THRESHOLD_USDC, select the most-liquid donor
+    desk and fire a direct settlement transfer to top it up to _EQ_TARGET_USDC.
+
+    Donor eligibility requires:
+      1. Sufficient USDC surplus so the donor stays above _EQ_TARGET_USDC after
+         the transfer.
+      2. A cached ETH gas balance of at least _CB_MIN_GAS_ETH * _EQ_GAS_SAFETY_MULT
+         (set to 0 and bypassed in dry-run / non-live mode so sandbox runs are
+         unaffected).
+
+    Uses fire_transfer with amount_override so the transfer is sized to exactly
+    bridge the gap to _EQ_TARGET_USDC, uses tx_type="swarm_equalization" for
+    audit visibility, and skips organic jitter (this is a deliberate operation).
+
+    If no donor qualifies, logs a WARNING and lets the server-side rebalance API
+    handle the deficit at the end of the iteration as a secondary fallback.
+    """
+    gas_floor = _CB_MIN_GAS_ETH * _EQ_GAS_SAFETY_MULT
+
+    for desk in desks:
+        if desk.balance_usdc >= _EQ_STALL_THRESHOLD_USDC:
+            continue
+
+        top_up = _EQ_TARGET_USDC - desk.balance_usdc
+
+        # In sandbox / dry-run mode eth_balance is 0.0 (guard never ran); bypass
+        # the gas check so the equalization still fires for stress-test runs.
+        live = is_live_mode() and not _DRY_RUN
+
+        donors = [
+            d for d in desks
+            if d is not desk
+            and d.balance_usdc > _EQ_TARGET_USDC + top_up   # stays above target after donating
+            and (not live or d.eth_balance >= gas_floor)     # gas guard only enforced in live mode
+        ]
+
+        if not donors:
+            log.warning(
+                "EQUALIZE  %-7s  stalled at %.2f USDC — no eligible donor "
+                "(need donor_usdc > %.2f and%s eth_balance >= %.6f ETH)",
+                desk.name, desk.balance_usdc,
+                _EQ_TARGET_USDC + top_up,
+                "" if live else " [gas check bypassed in sandbox]",
+                gas_floor,
+            )
+            continue
+
+        donor = max(donors, key=lambda d: d.balance_usdc)
+        log.info(
+            "EQUALIZE  %-7s  balance=%.2f < threshold=%.2f — "
+            "requesting %.2f USDC top-up from %-7s (donor_bal=%.2f  donor_eth=%.6f)",
+            desk.name, desk.balance_usdc, _EQ_STALL_THRESHOLD_USDC,
+            top_up, donor.name, donor.balance_usdc, donor.eth_balance,
+        )
+        await fire_transfer(client, donor, desk, stats, amount_override=top_up)
 
 
 # ---------------------------------------------------------------------------
@@ -489,6 +583,7 @@ async def _check_gas_guard(desks: list[DeskState]) -> None:
         eth_bal: float = await loop.run_in_executor(
             None, get_on_chain_eth_balance, desk.wallet_address
         )
+        desk.eth_balance = eth_bal  # cache for equalization donor gas vetting
 
         log.debug(
             "GAS-GUARD  %-7s  eth_balance=%.6f ETH  threshold=%.6f ETH",
@@ -565,6 +660,11 @@ async def swarm_loop(desks: list[DeskState]) -> None:
         while True:
             loop_start = time.perf_counter()
             stats.iterations += 1
+
+            # 0. Equalization pass — top up stalled desks before routing so no
+            #    iteration fires with an under-capitalised desk in the chain.
+            if not _DRY_RUN:
+                await _equalize_stalled_desks(client, desks, stats)
 
             # 1. Route-path viability check
             viable = await check_route(client, desks, stats)
