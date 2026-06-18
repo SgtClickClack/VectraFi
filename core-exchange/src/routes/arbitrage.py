@@ -1,24 +1,30 @@
 """
-Cross-agent arbitrage router — POST /api/v1/arbitrage/route-path
+Cross-agent arbitrage and autonomous rebalancing router.
 
-Performs a fully isolated dry-run viability check for a proposed arbitrage
-execution path across an ordered chain of agents.  The entire simulation runs
-inside a single SQLAlchemy savepoint (db.begin_nested()) that is ALWAYS rolled
-back — no ledger rows are written or modified.
+  POST /api/v1/arbitrage/route-path  — dry-run viability check for an
+      ordered agent chain (no ledger mutations committed).
 
-Per-leg checks (for every agent_id in agent_chain):
-  1. Active registered wallet exists in agent_wallets.
-  2. Current balance >= per-leg slippage floor (volume * slip_pct / n).
-  3. Zero SettlementTransaction rows with on_chain_status='PENDING_SYNC' as
-     either sender or receiver (on-chain limbo blocks safe routing).
+  POST /api/v1/arbitrage/rebalance   — autonomous 3-hop liquidity rebalance
+      triggered when a target agent's balance breaches its safety floor.
 
-Slippage model:
-  - total_slippage   = volume_usdc * slippage_tolerance_pct
-  - slip_floor_i     = total_slippage / len(agent_chain)  (evenly distributed)
-  - expected_output  = volume_usdc - total_slippage
-  - Simulation deducts slip_floor_i from each agent's balance in order so that
-    an agent appearing multiple times in the chain is charged for each leg
-    separately (cumulative cost correctly detected).
+Dry-run simulation model (route-path and rebalance phase 1 share _simulate_chain):
+  For every agent in agent_chain:
+    1. Active registered wallet exists in agent_wallets.
+    2. Current balance >= per-leg slippage floor (volume * slip_pct / n).
+    3. Zero SettlementTransaction rows with on_chain_status='PENDING_SYNC' as
+       either sender or receiver (on-chain limbo blocks safe routing).
+
+Rebalance execution model (3-hop relay chain):
+  Relay amounts cascade so each relay agent forwards the net it just received:
+    hop 0: relay_0 → relay_1   gross = volume_usdc
+    hop 1: relay_1 → relay_2   gross = volume * (1 − 1.5%)
+    hop 2: relay_2 → target    gross = volume * (1 − 1.5%)²
+
+  Net effects on each participant:
+    relay_0 : loses volume_usdc (full gross initiator)
+    relay_1 : loses only the 1.5% tax on hop_1 gross (~1.478% of volume)
+    relay_2 : loses only the 1.5% tax on hop_2 gross (~1.456% of volume)
+    target  : gains volume * 0.985³ ≈ 95.57% of volume
 """
 
 from __future__ import annotations
@@ -26,17 +32,129 @@ from __future__ import annotations
 import logging
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from database import get_db
 from models import AgentWallet, SettlementTransaction
-from schemas import ArbitrageRouteRequest, ArbitrageRouteResponse, ArbitrageStepResult
+from schemas import (
+    ArbitrageRouteRequest,
+    ArbitrageRouteResponse,
+    ArbitrageStepResult,
+    RebalanceHop,
+    RebalanceRequest,
+    RebalanceResponse,
+)
 
 logger = logging.getLogger("vectrafi.arbitrage")
 router = APIRouter(prefix="/api/v1/arbitrage", tags=["arbitrage"])
 
+_RELAY_HOPS    = 3
+_CANDIDATE_CAP = 10    # top-N agents queried as relay candidates
+_TAX_NET       = Decimal("0.985")    # 1 − 1.5%
+
+
+# ---------------------------------------------------------------------------
+# Shared simulation primitive — used by both route-path and rebalance
+# ---------------------------------------------------------------------------
+
+def _simulate_chain(
+    db: Session,
+    chain: list[str],
+    volume_usdc: float,
+    slippage_tolerance_pct: float,
+) -> tuple[bool, list[ArbitrageStepResult], float, float, str | None]:
+    """
+    Dry-run viability check on an ordered agent chain.
+
+    Runs inside a savepoint that is ALWAYS rolled back, so no ledger rows are
+    written or modified regardless of the result.
+
+    Returns:
+        (viable, steps, total_slippage_usdc, expected_output_usdc, rejection_reason)
+    """
+    n      = len(chain)
+    volume = Decimal(str(volume_usdc))
+    slip   = Decimal(str(slippage_tolerance_pct))
+
+    total_slippage  = (volume * slip).quantize(Decimal("0.00000001"))
+    slip_floor      = (total_slippage / Decimal(n)).quantize(Decimal("0.00000001"))
+    expected_output = volume - total_slippage
+
+    steps: list[ArbitrageStepResult] = []
+    rejection: str | None = None
+
+    savepoint = db.begin_nested()
+    try:
+        for i, agent_id in enumerate(chain):
+            wallet = db.get(AgentWallet, agent_id)
+
+            if wallet is None:
+                steps.append(ArbitrageStepResult(
+                    step=i, agent_id=agent_id,
+                    balance_usdc=0.0, slippage_floor_usdc=float(slip_floor),
+                    balance_sufficient=False, pending_sync_blocked=False,
+                    wallet_found=False,
+                ))
+                if rejection is None:
+                    rejection = f"step {i}: agent '{agent_id}' has no registered wallet"
+                continue
+
+            pending_count: int = (
+                db.query(func.count(SettlementTransaction.tx_id))
+                .filter(
+                    SettlementTransaction.on_chain_status == "PENDING_SYNC",
+                    or_(
+                        SettlementTransaction.sender_id   == agent_id,
+                        SettlementTransaction.receiver_id == agent_id,
+                    ),
+                )
+                .scalar()
+                or 0
+            )
+            is_blocked     = pending_count > 0
+            balance_before = Decimal(str(wallet.balance_usdc))
+            sufficient     = balance_before >= slip_floor
+
+            # Simulate per-leg slippage deduction (savepoint rolls this back).
+            wallet.balance_usdc = balance_before - slip_floor
+            db.flush()
+
+            steps.append(ArbitrageStepResult(
+                step=i, agent_id=agent_id,
+                balance_usdc=float(balance_before),
+                slippage_floor_usdc=float(slip_floor),
+                balance_sufficient=sufficient,
+                pending_sync_blocked=is_blocked,
+                wallet_found=True,
+            ))
+
+            if rejection is None:
+                if is_blocked:
+                    rejection = (
+                        f"step {i}: agent '{agent_id}' has {pending_count} "
+                        "PENDING_SYNC transaction(s) blocking participation"
+                    )
+                elif not sufficient:
+                    rejection = (
+                        f"step {i}: agent '{agent_id}' balance "
+                        f"{float(balance_before):.6f} USDC is below "
+                        f"slippage floor {float(slip_floor):.6f} USDC"
+                    )
+    finally:
+        savepoint.rollback()
+
+    viable = all(
+        s.wallet_found and s.balance_sufficient and not s.pending_sync_blocked
+        for s in steps
+    )
+    return viable, steps, float(total_slippage), float(expected_output), rejection
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/arbitrage/route-path
+# ---------------------------------------------------------------------------
 
 @router.post("/route-path", response_model=ArbitrageRouteResponse)
 def arbitrage_route_path(
@@ -50,116 +168,228 @@ def arbitrage_route_path(
     rolled back, leaving the ledger untouched regardless of the result.
     """
     chain = payload.agent_chain
-    n = len(chain)
-    volume = Decimal(str(payload.volume_usdc))
-    slip_pct = Decimal(str(payload.slippage_tolerance_pct))
-
-    total_slippage = (volume * slip_pct).quantize(Decimal("0.00000001"))
-    slip_floor = (total_slippage / Decimal(n)).quantize(Decimal("0.00000001"))
-    expected_output = volume - total_slippage
-
-    steps: list[ArbitrageStepResult] = []
-    rejection_reason: str | None = None
-
-    savepoint = db.begin_nested()
-    try:
-        for i, agent_id in enumerate(chain):
-            wallet = db.get(AgentWallet, agent_id)
-
-            if wallet is None:
-                steps.append(
-                    ArbitrageStepResult(
-                        step=i,
-                        agent_id=agent_id,
-                        balance_usdc=0.0,
-                        slippage_floor_usdc=float(slip_floor),
-                        balance_sufficient=False,
-                        pending_sync_blocked=False,
-                        wallet_found=False,
-                    )
-                )
-                if rejection_reason is None:
-                    rejection_reason = (
-                        f"step {i}: agent '{agent_id}' has no registered wallet"
-                    )
-                continue
-
-            # Check for on-chain limbo: any PENDING_SYNC row where this agent
-            # is sender or receiver blocks them from participating in new routes.
-            pending_count: int = (
-                db.query(func.count(SettlementTransaction.tx_id))
-                .filter(
-                    SettlementTransaction.on_chain_status == "PENDING_SYNC",
-                    or_(
-                        SettlementTransaction.sender_id == agent_id,
-                        SettlementTransaction.receiver_id == agent_id,
-                    ),
-                )
-                .scalar()
-                or 0
-            )
-            is_blocked = pending_count > 0
-
-            balance_before = Decimal(str(wallet.balance_usdc))
-            sufficient = balance_before >= slip_floor
-
-            # Simulate the per-leg slippage deduction so that agents appearing
-            # multiple times in the chain are charged cumulatively.  The
-            # savepoint rollback below discards all mutations after the check.
-            wallet.balance_usdc = balance_before - slip_floor
-            db.flush()
-
-            steps.append(
-                ArbitrageStepResult(
-                    step=i,
-                    agent_id=agent_id,
-                    balance_usdc=float(balance_before),
-                    slippage_floor_usdc=float(slip_floor),
-                    balance_sufficient=sufficient,
-                    pending_sync_blocked=is_blocked,
-                    wallet_found=True,
-                )
-            )
-
-            if rejection_reason is None:
-                if is_blocked:
-                    rejection_reason = (
-                        f"step {i}: agent '{agent_id}' has {pending_count} "
-                        "PENDING_SYNC transaction(s) blocking participation"
-                    )
-                elif not sufficient:
-                    rejection_reason = (
-                        f"step {i}: agent '{agent_id}' balance "
-                        f"{float(balance_before):.6f} USDC is below "
-                        f"slippage floor {float(slip_floor):.6f} USDC"
-                    )
-    finally:
-        savepoint.rollback()
-
-    viable = all(
-        s.wallet_found and s.balance_sufficient and not s.pending_sync_blocked
-        for s in steps
+    viable, steps, total_slip, expected_out, rejection = _simulate_chain(
+        db, chain, payload.volume_usdc, payload.slippage_tolerance_pct,
     )
 
     logger.info(
         "Arbitrage route-path dry-run: viable=%s agents=%d volume=%.4f "
         "total_slip=%.4f reason=%s",
-        viable,
-        n,
-        float(volume),
-        float(total_slippage),
-        rejection_reason,
+        viable, len(chain), payload.volume_usdc, total_slip, rejection,
     )
 
     return ArbitrageRouteResponse(
         viable=viable,
         entry_asset=payload.entry_asset,
         exit_asset=payload.exit_asset,
-        volume_usdc=float(volume),
+        volume_usdc=payload.volume_usdc,
         agent_chain=chain,
-        slippage_tolerance_pct=float(slip_pct),
+        slippage_tolerance_pct=payload.slippage_tolerance_pct,
         steps=steps,
-        total_slippage_usdc=float(total_slippage),
-        expected_output_usdc=float(expected_output),
-        rejection_reason=rejection_reason,
+        total_slippage_usdc=total_slip,
+        expected_output_usdc=expected_out,
+        rejection_reason=rejection,
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/arbitrage/rebalance
+# ---------------------------------------------------------------------------
+
+@router.post("/rebalance", response_model=RebalanceResponse)
+def rebalance_agent_balance(
+    payload: RebalanceRequest,
+    db: Session = Depends(get_db),
+) -> RebalanceResponse:
+    """
+    Autonomously route liquidity to a target agent whose balance has breached
+    its safety floor via a 3-hop relay chain drawn from the most-liquid agents.
+
+    No EIP-191 signature is required — this is an internal engine operation.
+    All three relay transfers are executed atomically inside a single DB
+    transaction using the same pessimistic-locking primitive as settlement/transfer.
+    If any hop fails at execution time, the entire batch is rolled back.
+
+    Safety floor = volume_usdc × slippage_tolerance_pct.
+    Rebalance triggers only when target.balance_usdc < safety_floor.
+    """
+    # Import here to avoid a module-level circular-import risk; the function
+    # is a stable internal primitive that will not move or be renamed.
+    from routes.settlement import _execute_transfer  # noqa: PLC0415
+
+    # ------------------------------------------------------------------
+    # 1. Resolve target wallet
+    # ------------------------------------------------------------------
+    target = db.get(AgentWallet, payload.target_agent_id)
+    if target is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No wallet found for target_agent_id '{payload.target_agent_id}'",
+        )
+
+    volume      = Decimal(str(payload.volume_usdc))
+    floor       = (volume * Decimal(str(payload.slippage_tolerance_pct))).quantize(
+        Decimal("0.00000001")
+    )
+    pre_balance = Decimal(str(target.balance_usdc))
+
+    # ------------------------------------------------------------------
+    # 2. Breach check
+    # ------------------------------------------------------------------
+    if pre_balance >= floor:
+        return RebalanceResponse(
+            rebalanced=False,
+            target_agent_id=payload.target_agent_id,
+            volume_usdc=payload.volume_usdc,
+            relay_path=[],
+            transactions=[],
+            pre_balance_usdc=float(pre_balance),
+            post_balance_usdc=float(pre_balance),
+            total_tax_usdc=0.0,
+            rejection_reason=(
+                f"target balance {float(pre_balance):.8f} USDC is already at or "
+                f"above safety floor {float(floor):.8f} USDC — rebalance not required"
+            ),
+        )
+
+    # ------------------------------------------------------------------
+    # 3. Find relay candidates: top-N by balance, no PENDING_SYNC, not target
+    # ------------------------------------------------------------------
+    pending_rows = (
+        db.query(SettlementTransaction.sender_id)
+        .filter(SettlementTransaction.on_chain_status == "PENDING_SYNC")
+        .union(
+            db.query(SettlementTransaction.receiver_id)
+            .filter(SettlementTransaction.on_chain_status == "PENDING_SYNC")
+        )
+        .all()
+    )
+    blocked_ids: set[str] = {row[0] for row in pending_rows}
+
+    q = db.query(AgentWallet).filter(AgentWallet.agent_id != payload.target_agent_id)
+    if blocked_ids:
+        q = q.filter(AgentWallet.agent_id.notin_(blocked_ids))
+    candidates: list[AgentWallet] = (
+        q.order_by(AgentWallet.balance_usdc.desc()).limit(_CANDIDATE_CAP).all()
+    )
+
+    if len(candidates) < _RELAY_HOPS:
+        return RebalanceResponse(
+            rebalanced=False,
+            target_agent_id=payload.target_agent_id,
+            volume_usdc=payload.volume_usdc,
+            relay_path=[],
+            transactions=[],
+            pre_balance_usdc=float(pre_balance),
+            post_balance_usdc=float(pre_balance),
+            total_tax_usdc=0.0,
+            rejection_reason=(
+                f"insufficient relay candidates: {len(candidates)} available, "
+                f"need at least {_RELAY_HOPS}"
+            ),
+        )
+
+    relay_ids: list[str] = [c.agent_id for c in candidates[:_RELAY_HOPS]]
+
+    # ------------------------------------------------------------------
+    # 4. Simulate viability (dry-run, savepoint rolled back)
+    # ------------------------------------------------------------------
+    viable, _, _, _, sim_rejection = _simulate_chain(
+        db, relay_ids, payload.volume_usdc, payload.slippage_tolerance_pct,
+    )
+
+    # Hard check: relay_0 must hold the full gross volume to initiate hop 0.
+    if viable:
+        relay_0_balance = Decimal(str(candidates[0].balance_usdc))
+        if relay_0_balance < volume:
+            viable        = False
+            sim_rejection = (
+                f"relay_0 '{relay_ids[0]}' balance {float(relay_0_balance):.8f} USDC "
+                f"is below required volume {payload.volume_usdc:.8f} USDC"
+            )
+
+    if not viable:
+        return RebalanceResponse(
+            rebalanced=False,
+            target_agent_id=payload.target_agent_id,
+            volume_usdc=payload.volume_usdc,
+            relay_path=relay_ids,
+            transactions=[],
+            pre_balance_usdc=float(pre_balance),
+            post_balance_usdc=float(pre_balance),
+            total_tax_usdc=0.0,
+            rejection_reason=sim_rejection,
+        )
+
+    # ------------------------------------------------------------------
+    # 5. Execute 3-hop relay chain atomically
+    #
+    # Amounts cascade: gross of hop n = net of hop n−1.
+    #   hop_amounts[0] = volume_usdc
+    #   hop_amounts[1] = volume * 0.985
+    #   hop_amounts[2] = volume * 0.985²
+    # ------------------------------------------------------------------
+    hop_gross: list[Decimal] = [volume]
+    for _ in range(_RELAY_HOPS - 1):
+        hop_gross.append(
+            (hop_gross[-1] * _TAX_NET).quantize(Decimal("0.00000001"))
+        )
+
+    senders   = [relay_ids[0], relay_ids[1], relay_ids[2]]
+    receivers = [relay_ids[1], relay_ids[2], payload.target_agent_id]
+
+    executed: list[RebalanceHop] = []
+    total_tax = Decimal("0")
+
+    try:
+        for i, (sender_id, receiver_id, gross) in enumerate(
+            zip(senders, receivers, hop_gross)
+        ):
+            tx = _execute_transfer(
+                db, sender_id, receiver_id,
+                float(gross), "internal_rebalance",
+            )
+            executed.append(RebalanceHop(
+                hop=i,
+                sender_id=tx.sender_id,
+                receiver_id=tx.receiver_id,
+                gross_amount_usdc=float(tx.gross_amount_usdc),
+                tax_amount_usdc=float(tx.tax_amount_usdc),
+                net_amount_usdc=float(tx.net_amount_usdc),
+                tx_id=tx.tx_id,
+            ))
+            total_tax += Decimal(str(tx.tax_amount_usdc))
+
+        db.commit()
+
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Rebalance execution failed — all hops have been rolled back",
+        )
+
+    db.refresh(target)
+    post_balance = Decimal(str(target.balance_usdc))
+
+    logger.info(
+        "Rebalance complete: target=%s pre=%.6f post=%.6f "
+        "relay=%s total_tax=%.6f",
+        payload.target_agent_id,
+        float(pre_balance),
+        float(post_balance),
+        " → ".join(relay_ids),
+        float(total_tax),
+    )
+
+    return RebalanceResponse(
+        rebalanced=True,
+        target_agent_id=payload.target_agent_id,
+        volume_usdc=payload.volume_usdc,
+        relay_path=relay_ids,
+        transactions=executed,
+        pre_balance_usdc=float(pre_balance),
+        post_balance_usdc=float(post_balance),
+        total_tax_usdc=float(total_tax),
+        rejection_reason=None,
     )

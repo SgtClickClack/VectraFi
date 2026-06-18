@@ -60,9 +60,12 @@ _ERC20_TRANSFER_ABI: Final[list[dict]] = [
     },
 ]
 
-# Gas price ceiling: if base fee exceeds this (in gwei) the settlement is
+# Gas ceiling: if maxFeePerGas exceeds this (in gwei) the settlement is
 # deferred to PENDING_SYNC rather than paying an unbounded gas cost.
 _MAX_GAS_PRICE_GWEI: Final[int] = 500
+
+# EIP-1559 tip sent to the block proposer; 1 gwei is sufficient on Base L2.
+_MAX_PRIORITY_FEE_WEI: Final[int] = 1_000_000_000
 
 # ERC-20 transfer uses ~65 000 gas on Base; 100 000 gives a comfortable margin.
 _GAS_LIMIT: Final[int] = 100_000
@@ -82,7 +85,7 @@ class OnchainSettlementResult:
     # wei values actually submitted (useful for audit logs)
     net_amount_wei: int = 0
     tax_amount_wei: int = 0
-    gas_price_gwei: float = 0.0
+    max_fee_gwei: float = 0.0
     extra: dict = field(default_factory=dict)
 
 
@@ -181,7 +184,8 @@ class Web3Bridge:
         to_address: str,
         amount_wei: int,
         nonce: int,
-        gas_price_wei: int,
+        max_fee_per_gas: int,
+        max_priority_fee_per_gas: int,
         chain_id: int,
     ) -> str:
         """Build, sign, and broadcast a single ERC-20 transfer. Returns the tx hash."""
@@ -201,7 +205,8 @@ class Web3Bridge:
                 "from": self._account.address,
                 "nonce": nonce,
                 "gas": _GAS_LIMIT,
-                "gasPrice": gas_price_wei,
+                "maxFeePerGas": max_fee_per_gas,
+                "maxPriorityFeePerGas": max_priority_fee_per_gas,
                 "chainId": chain_id,
             }
         )
@@ -262,28 +267,31 @@ class Web3Bridge:
             tax_wei = self._to_wei(tax_amount, decimals)
 
             chain_id: int = await w3.eth.chain_id
-            gas_price_wei: int = await w3.eth.gas_price
-            gas_price_gwei = float(AsyncWeb3.from_wei(gas_price_wei, "gwei"))
+            latest_block = await w3.eth.get_block("latest")
+            base_fee: int = latest_block["baseFeePerGas"]
+            max_priority_fee_per_gas: int = _MAX_PRIORITY_FEE_WEI
+            max_fee_per_gas: int = base_fee * 2 + max_priority_fee_per_gas
+            max_fee_gwei = float(AsyncWeb3.from_wei(max_fee_per_gas, "gwei"))
 
             logger.info(
                 "onchain_settlement start sender=%s receiver=%s "
-                "gross=%s tax=%s net=%s chain_id=%s gas_gwei=%.2f",
+                "gross=%s tax=%s net=%s chain_id=%s max_fee_gwei=%.2f",
                 sender_wallet, receiver_wallet,
                 gross_amount, tax_amount, net_amount,
-                chain_id, gas_price_gwei,
+                chain_id, max_fee_gwei,
             )
 
             # Defer if gas is unreasonably expensive to prevent protocol loss.
-            if gas_price_gwei > _MAX_GAS_PRICE_GWEI:
+            if max_fee_gwei > _MAX_GAS_PRICE_GWEI:
                 logger.warning(
                     "Gas spike detected (%.2f gwei > %d gwei ceiling) — "
                     "deferring settlement to PENDING_SYNC",
-                    gas_price_gwei, _MAX_GAS_PRICE_GWEI,
+                    max_fee_gwei, _MAX_GAS_PRICE_GWEI,
                 )
                 return OnchainSettlementResult(
                     status="PENDING_SYNC",
-                    error=f"Gas price {gas_price_gwei:.2f} gwei exceeds ceiling",
-                    gas_price_gwei=gas_price_gwei,
+                    error=f"Max fee {max_fee_gwei:.2f} gwei exceeds ceiling",
+                    max_fee_gwei=max_fee_gwei,
                     net_amount_wei=net_wei,
                     tax_amount_wei=tax_wei,
                 )
@@ -299,7 +307,8 @@ class Web3Bridge:
                 receiver_wallet,
                 net_wei,
                 nonce=base_nonce,
-                gas_price_wei=gas_price_wei,
+                max_fee_per_gas=max_fee_per_gas,
+                max_priority_fee_per_gas=max_priority_fee_per_gas,
                 chain_id=chain_id,
             )
             logger.info("net_transfer submitted tx=%s", net_tx_hash)
@@ -310,7 +319,8 @@ class Web3Bridge:
                 self.treasury_address,  # type: ignore[arg-type]
                 tax_wei,
                 nonce=base_nonce + 1,
-                gas_price_wei=gas_price_wei,
+                max_fee_per_gas=max_fee_per_gas,
+                max_priority_fee_per_gas=max_priority_fee_per_gas,
                 chain_id=chain_id,
             )
             logger.info("tax_transfer submitted tx=%s", tax_tx_hash)
@@ -319,7 +329,7 @@ class Web3Bridge:
                 status="CONFIRMING",
                 net_tx_hash=net_tx_hash,
                 tax_tx_hash=tax_tx_hash,
-                gas_price_gwei=gas_price_gwei,
+                max_fee_gwei=max_fee_gwei,
                 net_amount_wei=net_wei,
                 tax_amount_wei=tax_wei,
             )
@@ -380,8 +390,10 @@ class Web3Bridge:
             result["connected"] = True
             result["chain_id"] = await w3.eth.chain_id
             result["latest_block"] = await w3.eth.block_number
-            gas_wei = await w3.eth.gas_price
-            result["gas_price_gwei"] = float(AsyncWeb3.from_wei(gas_wei, "gwei"))
+            latest_block = await w3.eth.get_block("latest")
+            base_fee_wei = latest_block.get("baseFeePerGas", 0)
+            max_fee_wei = base_fee_wei * 2 + _MAX_PRIORITY_FEE_WEI
+            result["gas_price_gwei"] = float(AsyncWeb3.from_wei(max_fee_wei, "gwei"))
 
             if self.usdc_address:
                 result["usdc_decimals"] = await self._usdc_decimals_cached(w3)

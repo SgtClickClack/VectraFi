@@ -353,6 +353,192 @@
       90%  { transform: scaleX(1); }
       100% { transform: scaleX(1); opacity: 0; }
     }
+
+    /* ── SWARM PANEL ── */
+    .icon-swarm { background: rgba(16,185,129,.15); }
+
+    .swarm-stats-bar {
+      display: flex;
+      gap: 24px;
+      flex-wrap: wrap;
+      align-items: center;
+      padding-bottom: 14px;
+      margin-bottom: 14px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .swarm-stat { display: flex; flex-direction: column; gap: 3px; }
+
+    .swarm-stat-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--muted);
+    }
+
+    .swarm-stat-value {
+      font-size: 15px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      color: var(--text);
+      line-height: 1;
+    }
+
+    .desk-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    @media (max-width: 640px) {
+      .desk-grid { grid-template-columns: 1fr; }
+    }
+
+    .desk-card {
+      background: rgba(255,255,255,.03);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 16px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .desk-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 2px;
+      background: var(--desk-color, var(--accent));
+    }
+
+    .desk-name {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--desk-color, var(--accent));
+      margin-bottom: 10px;
+    }
+
+    .desk-balance {
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      font-variant-numeric: tabular-nums;
+      line-height: 1;
+    }
+
+    .desk-meta {
+      margin-top: 8px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .swarm-terminal-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+
+    .swarm-terminal {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 14px;
+      height: 260px;
+      overflow-y: auto;
+      font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', monospace;
+      font-size: 11.5px;
+      line-height: 1.65;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .swarm-terminal::-webkit-scrollbar { width: 6px; }
+    .swarm-terminal::-webkit-scrollbar-track { background: transparent; }
+    .swarm-terminal::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 3px;
+    }
+
+    .log-error     { color: var(--red); }
+    .log-warn      { color: var(--amber); }
+    .log-ok        { color: var(--green); }
+    .log-rebalance { color: var(--purple); }
+    .log-provision { color: var(--accent); }
+    .log-heartbeat { color: var(--muted); }
+    .log-default   { color: var(--text-dim); }
+
+    /* ── SWARM CONTROL BUTTONS ── */
+    .swarm-controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .ctrl-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 14px;
+      border-radius: 6px;
+      border: 1px solid transparent;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s, transform 0.1s;
+      letter-spacing: 0.3px;
+    }
+
+    .ctrl-btn:active { transform: scale(0.97); }
+    .ctrl-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+    .ctrl-btn-start {
+      background: rgba(16,185,129,.18);
+      color: var(--green);
+      border-color: rgba(16,185,129,.4);
+    }
+    .ctrl-btn-start:hover:not(:disabled) { background: rgba(16,185,129,.28); }
+
+    .ctrl-btn-stop {
+      background: rgba(239,68,68,.15);
+      color: var(--red);
+      border-color: rgba(239,68,68,.35);
+    }
+    .ctrl-btn-stop:hover:not(:disabled) { background: rgba(239,68,68,.25); }
+
+    .dry-run-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--text-dim);
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .dry-run-label input[type="checkbox"] {
+      accent-color: var(--purple);
+      width: 14px;
+      height: 14px;
+      cursor: pointer;
+    }
+
+    .swarm-proc-badge {
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 20px;
+      font-weight: 600;
+      letter-spacing: 0.3px;
+    }
+    .proc-running { background: rgba(16,185,129,.15); color: var(--green); border: 1px solid rgba(16,185,129,.3); }
+    .proc-stopped { background: rgba(100,116,139,.12); color: var(--muted); border: 1px solid rgba(100,116,139,.25); }
+    .proc-error   { background: rgba(239,68,68,.12);   color: var(--red);   border: 1px solid rgba(239,68,68,.25); }
   </style>
 </head>
 <body>
@@ -408,6 +594,31 @@
       </div>
     </div>
 
+  </div>
+
+  <!-- SWARM ACTIVITY PANEL -->
+  <div class="panel" id="panel-swarm">
+    <div class="panel-header" style="flex-wrap:wrap;gap:10px">
+      <span class="panel-title">Autonomous Swarm Activity &amp; Liquidity Desks</span>
+      <div class="swarm-controls">
+        <label class="dry-run-label" title="Skip real transfers; route checks only">
+          <input type="checkbox" id="swarm-dry-run"> Dry-Run
+        </label>
+        <button class="ctrl-btn ctrl-btn-start" id="btn-swarm-start" onclick="swarmStart()">
+          &#x25B6; Start Swarm
+        </button>
+        <button class="ctrl-btn ctrl-btn-stop" id="btn-swarm-stop" onclick="swarmStop()" disabled>
+          &#x25A0; Stop Swarm
+        </button>
+        <span class="swarm-proc-badge proc-stopped" id="swarm-proc-badge">Idle</span>
+      </div>
+    </div>
+    <div class="panel-body" id="swarm-body">
+      <div class="connect-state">
+        <div class="spinner"></div>
+        Waiting for swarm daemon…
+      </div>
+    </div>
   </div>
 
   <!-- LIVE LEDGER GRID -->
@@ -610,21 +821,132 @@
     return r.json();
   }
 
+  // ── Swarm panel ───────────────────────────────────────────────────────────
+
+  const _DESK_COLORS  = { Alpha: 'var(--accent)', Beta: 'var(--purple)', Gamma: 'var(--green)' };
+  const _KNOWN_DESKS  = ['Alpha', 'Beta', 'Gamma'];
+  let   _swarmFirstPoll = true;
+
+  function escHtml(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function colorLogLine(raw) {
+    const s = escHtml(raw);
+    if (/\bERROR\b/.test(raw))                    return `<span class="log-error">${s}</span>`;
+    if (/\bWARNING\b/.test(raw))                  return `<span class="log-warn">${s}</span>`;
+    if (/TRANSFER.*\bOK\b/.test(raw))             return `<span class="log-ok">${s}</span>`;
+    if (/TRANSFER.*\bERR\b/.test(raw))            return `<span class="log-warn">${s}</span>`;
+    if (/\bREBALANCE\b.*post_balance/.test(raw))  return `<span class="log-rebalance">${s}</span>`;
+    if (/\bPROVISION\b/.test(raw))                return `<span class="log-provision">${s}</span>`;
+    if (/\bSWARM\b.*iter=/.test(raw))             return `<span class="log-heartbeat">${s}</span>`;
+    if (/DESK\s+\w+\s+balance=/.test(raw))        return `<span class="log-heartbeat">${s}</span>`;
+    return `<span class="log-default">${s}</span>`;
+  }
+
+  function _balColor(usdc) {
+    if (usdc > 500) return 'var(--green)';
+    if (usdc > 100) return 'var(--amber)';
+    return 'var(--red)';
+  }
+
+  function renderSwarm(data) {
+    const deskMap = {};
+    (data.desks || []).forEach(d => { deskMap[d.name] = d; });
+
+    const deskCards = _KNOWN_DESKS.map(name => {
+      const d     = deskMap[name];
+      const color = _DESK_COLORS[name] || 'var(--accent)';
+      const bal   = d ? d.balance_usdc : null;
+      const ok    = d ? d.transfers_ok  : '—';
+      const err   = d ? d.transfers_err : '—';
+      const balHtml = bal !== null
+        ? `<div class="desk-balance" style="color:${_balColor(bal)}">$${fmtUSDC(bal)}</div>`
+        : `<div class="desk-balance" style="color:var(--muted);font-size:14px">Offline</div>`;
+      return `
+        <div class="desk-card" style="--desk-color:${color}">
+          <div class="desk-name">${name}</div>
+          ${balHtml}
+          <div class="desk-meta">
+            ok <b style="color:var(--green)">${ok}</b>
+            &nbsp;&middot;&nbsp;
+            err <b style="color:var(--red)">${err}</b>
+          </div>
+        </div>`;
+    }).join('');
+
+    const iter    = data.iterations    != null ? fmtNum(data.iterations)    : '—';
+    const checks  = data.route_checks  != null ? fmtNum(data.route_checks)  : '—';
+    const viable  = data.viable_routes != null ? fmtNum(data.viable_routes) : '—';
+    const lastAct = data.last_activity || '—';
+    const statusBadge = data.swarm_active
+      ? '<span class="badge badge-live" style="font-size:10px;padding:2px 8px"><span class="dot"></span>Running</span>'
+      : '<span class="badge badge-syncing" style="font-size:10px;padding:2px 8px"><span class="dot"></span>Idle</span>';
+
+    const statsBar = `
+      <div class="swarm-stats-bar">
+        <div class="swarm-stat">
+          <div class="swarm-stat-label">Status</div>
+          <div class="swarm-stat-value">${statusBadge}</div>
+        </div>
+        <div class="swarm-stat">
+          <div class="swarm-stat-label">Iterations</div>
+          <div class="swarm-stat-value">${iter}</div>
+        </div>
+        <div class="swarm-stat">
+          <div class="swarm-stat-label">Route Checks</div>
+          <div class="swarm-stat-value">${checks}</div>
+        </div>
+        <div class="swarm-stat">
+          <div class="swarm-stat-label">Viable Routes</div>
+          <div class="swarm-stat-value" style="color:var(--green)">${viable}</div>
+        </div>
+        <div class="swarm-stat">
+          <div class="swarm-stat-label">Last Activity</div>
+          <div class="swarm-stat-value" style="color:var(--muted);font-size:12px">${lastAct}</div>
+        </div>
+      </div>`;
+
+    const lines = data.log_lines || [];
+    const termContent = lines.length === 0
+      ? '<span class="log-heartbeat">No log entries yet — start seed_swarm.py to populate this terminal.</span>'
+      : lines.map(colorLogLine).join('\n');
+
+    $('swarm-body').innerHTML = `
+      ${statsBar}
+      <div class="desk-grid">${deskCards}</div>
+      <div class="swarm-terminal-label">Live Agent Log — swarm_activity.log</div>
+      <div class="swarm-terminal" id="swarm-terminal">${termContent}</div>`;
+
+    const term = $('swarm-terminal');
+    if (term) term.scrollTop = term.scrollHeight;
+    _swarmFirstPoll = false;
+  }
+
+  function renderSwarmIdle() {
+    if (!_swarmFirstPoll) return;
+    $('swarm-body').innerHTML =
+      '<div class="connect-state"><div class="spinner"></div>Waiting for swarm daemon…</div>';
+  }
+
   // ── Main poll cycle ───────────────────────────────────────────────────────
 
   let _firstPoll = true;
 
   async function poll() {
     try {
-      const [treasury, stats, txns] = await Promise.all([
+      const [treasury, stats, txns, swarm] = await Promise.all([
         fetchJSON('/api/v1/analytics/treasury'),
         fetchJSON('/api/v1/analytics/stats'),
         fetchJSON('/api/v1/analytics/recent-transactions'),
+        fetchJSON('/api/v1/analytics/swarm').catch(() => null),
       ]);
 
       renderTreasury(treasury);
       renderNetwork(stats);
       renderLedger(txns);
+      if (swarm !== null) renderSwarm(swarm);
+      else renderSwarmIdle();
       setStatusOk(true);
       setLastUpdated();
       _firstPoll = false;
@@ -641,10 +963,105 @@
     }
   }
 
+  // ── Swarm process controls ────────────────────────────────────────────────
+
+  function _setSwarmBusy(busy) {
+    $('btn-swarm-start').disabled = busy;
+    $('btn-swarm-stop').disabled  = busy;
+  }
+
+  function _applySwarmStatus(data) {
+    const badge  = $('swarm-proc-badge');
+    const btnStart = $('btn-swarm-start');
+    const btnStop  = $('btn-swarm-stop');
+    if (data.running) {
+      badge.className   = 'swarm-proc-badge proc-running';
+      badge.textContent = data.pid ? `PID ${data.pid}` : 'Running';
+      btnStart.disabled = true;
+      btnStop.disabled  = false;
+      $('swarm-dry-run').disabled = true;
+    } else {
+      badge.className   = 'swarm-proc-badge proc-stopped';
+      badge.textContent = 'Idle';
+      btnStart.disabled = false;
+      btnStop.disabled  = true;
+      $('swarm-dry-run').disabled = false;
+    }
+  }
+
+  async function _refreshSwarmStatus() {
+    try {
+      const d = await fetchJSON('/api/v1/swarm/status');
+      _applySwarmStatus(d);
+    } catch (_) { /* non-fatal */ }
+  }
+
+  async function swarmStart() {
+    _setSwarmBusy(true);
+    const badge = $('swarm-proc-badge');
+    badge.className   = 'swarm-proc-badge proc-stopped';
+    badge.textContent = 'Starting…';
+    try {
+      const dry_run = $('swarm-dry-run').checked;
+      const r = await fetch(API_BASE + '/api/v1/swarm/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dry_run }),
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({ detail: r.statusText }));
+        badge.className   = 'swarm-proc-badge proc-error';
+        badge.textContent = `Error: ${err.detail || r.status}`;
+        _setSwarmBusy(false);
+        $('btn-swarm-start').disabled = false;
+        $('btn-swarm-stop').disabled  = true;
+        return;
+      }
+      const d = await r.json();
+      _applySwarmStatus({ running: true, pid: d.pid });
+    } catch (e) {
+      badge.className   = 'swarm-proc-badge proc-error';
+      badge.textContent = 'Failed';
+      _setSwarmBusy(false);
+      $('btn-swarm-start').disabled = false;
+      $('btn-swarm-stop').disabled  = true;
+    }
+  }
+
+  async function swarmStop() {
+    _setSwarmBusy(true);
+    const badge = $('swarm-proc-badge');
+    badge.className   = 'swarm-proc-badge proc-stopped';
+    badge.textContent = 'Stopping…';
+    try {
+      const r = await fetch(API_BASE + '/api/v1/swarm/stop', {
+        method: 'POST',
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({ detail: r.statusText }));
+        badge.className   = 'swarm-proc-badge proc-error';
+        badge.textContent = `Error: ${err.detail || r.status}`;
+        _setSwarmBusy(false);
+        $('btn-swarm-stop').disabled = false;
+        return;
+      }
+      _applySwarmStatus({ running: false });
+    } catch (e) {
+      badge.className   = 'swarm-proc-badge proc-error';
+      badge.textContent = 'Failed';
+      _setSwarmBusy(false);
+      $('btn-swarm-stop').disabled = false;
+    }
+  }
+
   // ── Boot ──────────────────────────────────────────────────────────────────
 
+  _refreshSwarmStatus();
   poll();
   setInterval(poll, POLL_MS);
+  setInterval(_refreshSwarmStatus, 5000);
 </script>
 </body>
 </html>

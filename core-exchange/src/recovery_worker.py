@@ -23,7 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from models import AgentWallet, SettlementTransaction
-from web3_bridge import Web3Bridge, Web3BridgeError
+from web3_bridge import Web3Bridge, Web3BridgeError, _MAX_PRIORITY_FEE_WEI
 from web3_bridge import bridge as _default_bridge
 
 logger = logging.getLogger("vectrafi.recovery_worker")
@@ -70,8 +70,12 @@ async def _recover_single(
         w3 = await bridge._get_w3()
         decimals = await bridge._usdc_decimals_cached(w3)
 
-        base_gas: int = await w3.eth.gas_price
-        premium_gas: int = int(Decimal(base_gas) * _GAS_PREMIUM)
+        latest_block = await w3.eth.get_block("latest")
+        base_fee: int = latest_block["baseFeePerGas"]
+        max_priority_fee_per_gas: int = _MAX_PRIORITY_FEE_WEI
+        max_fee_per_gas: int = base_fee * 2 + max_priority_fee_per_gas
+        # Apply 20% premium to unstick mempool-lagging transactions.
+        premium_max_fee: int = int(Decimal(max_fee_per_gas) * _GAS_PREMIUM)
         chain_id: int = await w3.eth.chain_id
 
         net_wei = bridge._to_wei(Decimal(str(tx.net_amount_usdc)), decimals)
@@ -87,12 +91,15 @@ async def _recover_single(
                 bridge._account.address, "pending"
             )
             logger.info(
-                "recovery tx=%s FULL_RETRY nonce=%d premium_gas_gwei=%.2f",
-                tx.tx_id, nonce, premium_gas / 1e9,
+                "recovery tx=%s FULL_RETRY nonce=%d premium_max_fee_gwei=%.2f",
+                tx.tx_id, nonce, premium_max_fee / 1e9,
             )
             net_tx_hash = await bridge._build_and_send_transfer(
                 w3, receiver_wallet.wallet_address, net_wei,
-                nonce=nonce, gas_price_wei=premium_gas, chain_id=chain_id,
+                nonce=nonce,
+                max_fee_per_gas=premium_max_fee,
+                max_priority_fee_per_gas=max_priority_fee_per_gas,
+                chain_id=chain_id,
             )
             logger.info("recovery tx=%s leg1_submitted net_hash=%s", tx.tx_id, net_tx_hash)
             nonce_for_tax = nonce + 1
@@ -119,7 +126,10 @@ async def _recover_single(
 
         tax_tx_hash = await bridge._build_and_send_transfer(
             w3, bridge.treasury_address, tax_wei,
-            nonce=nonce_for_tax, gas_price_wei=premium_gas, chain_id=chain_id,
+            nonce=nonce_for_tax,
+            max_fee_per_gas=premium_max_fee,
+            max_priority_fee_per_gas=max_priority_fee_per_gas,
+            chain_id=chain_id,
         )
         logger.info("recovery tx=%s leg2_submitted tax_hash=%s", tx.tx_id, tax_tx_hash)
 

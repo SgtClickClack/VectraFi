@@ -37,8 +37,10 @@ _SIGNING_ADDR  = "0x" + "D" * 40
 
 # ── Network / gas constants shared by helpers ─────────────────────────────────
 _BASE_NONCE    = 7
-_BASE_GAS_WEI  = 20_000_000_000          # 20 gwei
-_PREMIUM_GAS   = int(_BASE_GAS_WEI * 1.2)  # 24 gwei  (20% premium)
+_BASE_GAS_WEI  = 20_000_000_000          # 20 gwei  (used as baseFeePerGas)
+_MAX_PRIORITY_FEE_WEI = 1_000_000_000   # 1 gwei tip
+# EIP-1559: maxFeePerGas = baseFee*2 + tip = 41 gwei; with 20% premium = 49.2 gwei
+_PREMIUM_MAX_FEE = int((_BASE_GAS_WEI * 2 + _MAX_PRIORITY_FEE_WEI) * 1.2)
 _CHAIN_ID      = 8453                    # Base mainnet
 
 # ── Canonical test hashes ─────────────────────────────────────────────────────
@@ -131,10 +133,7 @@ class _AsyncEth:
     def __init__(self, *, receipt):
         self.get_transaction_count   = AsyncMock(return_value=_BASE_NONCE)
         self.get_transaction_receipt = AsyncMock(return_value=receipt)
-
-    @property
-    def gas_price(self):
-        return _as_coro(_BASE_GAS_WEI)
+        self.get_block               = AsyncMock(return_value={"baseFeePerGas": _BASE_GAS_WEI})
 
     @property
     def chain_id(self):
@@ -222,7 +221,7 @@ class TestCaseABothLegsDropped:
         calls = bridge._build_and_send_transfer.call_args_list
         assert len(calls) == 2
         for _, kw in calls:
-            assert kw["gas_price_wei"] == _PREMIUM_GAS
+            assert kw["max_fee_per_gas"] == _PREMIUM_MAX_FEE
 
     def test_R04_leg1_routes_to_receiver_leg2_routes_to_treasury(self, recovery_db):
         db = recovery_db

@@ -99,7 +99,7 @@ def _make_bridge() -> Web3Bridge:
 
 def _make_mock_w3(
     *,
-    gas_price_gwei: float = 1.0,
+    gas_price_gwei: float = 1.0,  # used as baseFeePerGas for EIP-1559 tests
     chain_id: int = 84532,   # Base Sepolia
     nonce: int = 42,
 ) -> MagicMock:
@@ -107,13 +107,15 @@ def _make_mock_w3(
     Build a MagicMock that satisfies all AsyncWeb3 attribute accesses made
     by process_onchain_settlement.
 
-    chain_id and gas_price are set as _awaitable() coroutines because the
-    bridge accesses them with plain `await w3.eth.X` (no call).
-    get_transaction_count is callable+async so uses AsyncMock.
+    chain_id is set as _awaitable() because the bridge accesses it with
+    plain `await w3.eth.chain_id` (no call).
+    get_block and get_transaction_count are callable+async so use AsyncMock.
+    gas_price_gwei is interpreted as baseFeePerGas for EIP-1559 fee computation.
     """
+    base_fee_wei = int(gas_price_gwei * 1e9)
     mock_w3 = MagicMock()
-    mock_w3.eth.chain_id    = _awaitable(chain_id)
-    mock_w3.eth.gas_price   = _awaitable(int(gas_price_gwei * 1e9))
+    mock_w3.eth.chain_id = _awaitable(chain_id)
+    mock_w3.eth.get_block = AsyncMock(return_value={"baseFeePerGas": base_fee_wei})
     mock_w3.eth.get_transaction_count = AsyncMock(return_value=nonce)
     return mock_w3
 
@@ -293,11 +295,13 @@ class TestPendingSyncFallback:
 
     def test_P06_gas_spike_above_ceiling_returns_pending_sync(self):
         """
-        When the live gas price exceeds _MAX_GAS_PRICE_GWEI (500 gwei) the bridge
+        When maxFeePerGas exceeds _MAX_GAS_PRICE_GWEI (500 gwei) the bridge
         defers the settlement to PENDING_SYNC to prevent unbounded gas loss.
-        The error string must mention the gas price so callers can log it.
+        The error string must mention the fee so callers can log it.
+
+        spike_base_fee=501 gwei → maxFeePerGas = 501*2 + 1 = 1003 gwei > 500.
         """
-        spike_gwei = _MAX_GAS_PRICE_GWEI + 1   # 501 gwei — just above the ceiling
+        spike_gwei = _MAX_GAS_PRICE_GWEI + 1   # 501 gwei base fee — ceiling is 500 gwei
 
         bridge   = _make_bridge()
         mock_w3  = _make_mock_w3(gas_price_gwei=spike_gwei)
@@ -309,9 +313,11 @@ class TestPendingSyncFallback:
         assert result.status == "PENDING_SYNC"
         assert result.net_tx_hash is None
         assert result.tax_tx_hash is None
-        assert result.gas_price_gwei == pytest.approx(spike_gwei, rel=1e-3)
-        # Error message must reference the gas price for observability
-        assert str(spike_gwei) in (result.error or "") or "gwei" in (result.error or "").lower()
+        # maxFeePerGas = baseFee*2 + 1 gwei priority = 501*2 + 1 = 1003 gwei
+        expected_max_fee_gwei = spike_gwei * 2 + 1
+        assert result.max_fee_gwei == pytest.approx(expected_max_fee_gwei, rel=1e-3)
+        # Error message must reference the fee for observability
+        assert "gwei" in (result.error or "").lower()
 
 
 # ---------------------------------------------------------------------------

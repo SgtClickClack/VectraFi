@@ -17,8 +17,10 @@ They degrade gracefully on an empty database (return zero-value responses).
 from __future__ import annotations
 
 import logging
+import re
 from collections import deque
 from decimal import Decimal
+from pathlib import Path
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import func
@@ -30,6 +32,8 @@ from schemas import (
     AnalyticsStatsResponse,
     AnalyticsTreasuryResponse,
     RecentTransactionItem,
+    SwarmAnalyticsResponse,
+    SwarmDeskState,
 )
 
 logger = logging.getLogger("vectrafi.analytics")
@@ -149,3 +153,94 @@ def analytics_recent_transactions(
         )
         for row in rows
     ]
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/analytics/swarm
+# ---------------------------------------------------------------------------
+
+# Path to the swarm daemon log — written by seed_swarm.py.
+# analytics.py lives at  <project>/core-exchange/src/routes/analytics.py
+# swarm log lives at     <project>/logs/swarm_activity.log
+_SWARM_LOG = (
+    Path(__file__).resolve().parent  # routes/
+    .parent                          # src/
+    .parent                          # core-exchange/
+    .parent                          # <project root>
+    / "logs" / "swarm_activity.log"
+)
+_TAIL_READ   = 100   # lines scanned for state parsing
+_TAIL_RETURN = 30    # lines returned to the UI terminal
+
+_RE_DESK  = re.compile(
+    r"DESK\s+(\w+)\s+balance=([\d.]+)\s+USDC\s+ok=(\d+)\s+err=(\d+)"
+)
+_RE_SWARM = re.compile(
+    r"SWARM\s+iter=(\d+)\s+route_checks=(\d+)\s+viable=(\d+)"
+)
+_RE_TS    = re.compile(r"^(\d{2}:\d{2}:\d{2})")
+
+
+def _tail_log(path: Path, n: int) -> list[str]:
+    """Return up to the last n non-empty lines from path."""
+    buf: deque[str] = deque(maxlen=n)
+    with path.open(encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            stripped = line.rstrip("\n\r")
+            if stripped:
+                buf.append(stripped)
+    return list(buf)
+
+
+@router.get("/swarm", response_model=SwarmAnalyticsResponse)
+def analytics_swarm() -> SwarmAnalyticsResponse:
+    """
+    Tail-reads swarm_activity.log and returns parsed desk states plus the last
+    30 raw log lines for the live terminal view in the telemetry dashboard.
+    Returns an empty/inactive response when the log file does not yet exist.
+    """
+    if not _SWARM_LOG.exists():
+        return SwarmAnalyticsResponse(
+            swarm_active=False,
+            log_lines=[],
+            desks=[],
+        )
+
+    lines = _tail_log(_SWARM_LOG, _TAIL_READ)
+
+    desks: dict[str, SwarmDeskState] = {}
+    iterations:    int | None = None
+    route_checks:  int | None = None
+    viable_routes: int | None = None
+    last_activity: str | None = None
+
+    for line in lines:
+        m = _RE_DESK.search(line)
+        if m:
+            name = m.group(1)
+            desks[name] = SwarmDeskState(
+                name=name,
+                balance_usdc=float(m.group(2)),
+                transfers_ok=int(m.group(3)),
+                transfers_err=int(m.group(4)),
+            )
+        m2 = _RE_SWARM.search(line)
+        if m2:
+            iterations    = int(m2.group(1))
+            route_checks  = int(m2.group(2))
+            viable_routes = int(m2.group(3))
+        ts = _RE_TS.match(line)
+        if ts:
+            last_activity = ts.group(1)
+
+    display_lines = lines[-_TAIL_RETURN:]
+
+    return SwarmAnalyticsResponse(
+        swarm_active=bool(desks or iterations is not None),
+        log_lines=display_lines,
+        desks=list(desks.values()),
+        iterations=iterations,
+        route_checks=route_checks,
+        viable_routes=viable_routes,
+        last_activity=last_activity,
+    )

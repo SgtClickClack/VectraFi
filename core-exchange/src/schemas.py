@@ -207,6 +207,42 @@ class ErrorResponse(BaseModel):
 # Arbitrage router schemas
 # ---------------------------------------------------------------------------
 
+class RebalanceRequest(BaseModel):
+    target_agent_id: str = Field(..., min_length=1, max_length=64)
+    volume_usdc: float = Field(
+        ..., gt=0,
+        description="Gross volume to initiate at the first relay hop",
+    )
+    slippage_tolerance_pct: float = Field(
+        default=0.005,
+        ge=0.0,
+        le=0.10,
+        description="Safety floor = volume × this fraction; rebalance triggers when target is below it",
+    )
+
+
+class RebalanceHop(BaseModel):
+    hop: int
+    sender_id: str
+    receiver_id: str
+    gross_amount_usdc: float
+    tax_amount_usdc: float
+    net_amount_usdc: float
+    tx_id: str
+
+
+class RebalanceResponse(BaseModel):
+    rebalanced: bool
+    target_agent_id: str
+    volume_usdc: float
+    relay_path: list[str]         # 3 relay agent IDs (does not include target)
+    transactions: list[RebalanceHop]
+    pre_balance_usdc: float
+    post_balance_usdc: float
+    total_tax_usdc: float
+    rejection_reason: str | None = None
+
+
 class ArbitrageRouteRequest(BaseModel):
     entry_asset: Literal["USDC", "HBAR"]
     exit_asset: Literal["USDC", "HBAR"]
@@ -253,3 +289,24 @@ class ArbitrageRouteResponse(BaseModel):
     total_slippage_usdc: float
     expected_output_usdc: float
     rejection_reason: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Swarm telemetry schemas
+# ---------------------------------------------------------------------------
+
+class SwarmDeskState(BaseModel):
+    name: str
+    balance_usdc: float = 0.0
+    transfers_ok: int = 0
+    transfers_err: int = 0
+
+
+class SwarmAnalyticsResponse(BaseModel):
+    swarm_active: bool
+    log_lines: list[str]
+    desks: list[SwarmDeskState]
+    iterations: int | None = None
+    route_checks: int | None = None
+    viable_routes: int | None = None
+    last_activity: str | None = None

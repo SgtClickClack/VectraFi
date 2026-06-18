@@ -1,1 +1,1 @@
-web: uvicorn core-exchange.src.main:app --host 0.0.0.0 --port $PORT
+web: cd core-exchange/src && uvicorn main:app --host 0.0.0.0 --port $PORT
