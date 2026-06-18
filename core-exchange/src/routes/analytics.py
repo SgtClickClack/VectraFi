@@ -223,6 +223,13 @@ def swarm_heartbeat(body: SwarmHeartbeatRequest) -> SwarmAnalyticsResponse:
     return _heartbeat
 
 
+def _read_log_tail() -> list[str]:
+    """Return the last _TAIL_RETURN non-empty log lines, or [] if the file is absent."""
+    if not _SWARM_LOG.exists():
+        return []
+    return _tail_log(_SWARM_LOG, _TAIL_READ)[-_TAIL_RETURN:]
+
+
 @router.get("/swarm", response_model=SwarmAnalyticsResponse)
 def analytics_swarm() -> SwarmAnalyticsResponse:
     """
@@ -230,22 +237,39 @@ def analytics_swarm() -> SwarmAnalyticsResponse:
     (populated by seed_swarm.py via POST /swarm/heartbeat); falls back to
     tail-reading swarm_activity.log for swarms started via the dashboard button.
     Returns an inactive response when neither source has data.
+
+    Log lines are always sourced from the file tail so the dashboard terminal
+    is never empty while the swarm is running — the heartbeat carries metrics
+    only (no log text).
     """
+    # Always read the current log tail for the terminal panel.
+    log_lines = _read_log_tail()
+
     # Prefer push-based heartbeat (works for both local and remote swarms)
     if _heartbeat is not None:
         age = time.monotonic() - _heartbeat_ts
         if age <= _HEARTBEAT_TTL:
-            return _heartbeat
+            # Merge live log tail into the cached heartbeat state.
+            return SwarmAnalyticsResponse(
+                swarm_active=_heartbeat.swarm_active,
+                log_lines=log_lines,
+                desks=_heartbeat.desks,
+                iterations=_heartbeat.iterations,
+                route_checks=_heartbeat.route_checks,
+                viable_routes=_heartbeat.viable_routes,
+                last_activity=_heartbeat.last_activity,
+            )
         # Heartbeat expired — swarm has stopped; fall through to log
 
-    if not _SWARM_LOG.exists():
+    if not log_lines:
         return SwarmAnalyticsResponse(
             swarm_active=False,
             log_lines=[],
             desks=[],
         )
 
-    lines = _tail_log(_SWARM_LOG, _TAIL_READ)
+    # Parse the wider scan window for structured state, display the trimmed tail.
+    scan_lines = _tail_log(_SWARM_LOG, _TAIL_READ)
 
     desks: dict[str, SwarmDeskState] = {}
     iterations:    int | None = None
@@ -253,7 +277,7 @@ def analytics_swarm() -> SwarmAnalyticsResponse:
     viable_routes: int | None = None
     last_activity: str | None = None
 
-    for line in lines:
+    for line in scan_lines:
         m = _RE_DESK.search(line)
         if m:
             name = m.group(1)
@@ -272,11 +296,9 @@ def analytics_swarm() -> SwarmAnalyticsResponse:
         if ts:
             last_activity = ts.group(1)
 
-    display_lines = lines[-_TAIL_RETURN:]
-
     return SwarmAnalyticsResponse(
         swarm_active=bool(desks or iterations is not None),
-        log_lines=display_lines,
+        log_lines=log_lines,
         desks=list(desks.values()),
         iterations=iterations,
         route_checks=route_checks,
