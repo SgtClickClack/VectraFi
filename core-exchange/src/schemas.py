@@ -318,6 +318,7 @@ class SwarmDeskState(BaseModel):
     balance_usdc: float = 0.0
     transfers_ok: int = 0
     transfers_err: int = 0
+    eth_balance: float = 0.0
 
 
 class SwarmAnalyticsResponse(BaseModel):
@@ -328,6 +329,8 @@ class SwarmAnalyticsResponse(BaseModel):
     route_checks: int | None = None
     viable_routes: int | None = None
     last_activity: str | None = None
+    equalization_count: int = 0
+    equalization_volume_usdc: float = 0.0
 
 
 class SwarmHeartbeatRequest(BaseModel):
@@ -336,3 +339,91 @@ class SwarmHeartbeatRequest(BaseModel):
     viable_routes: int
     dry_run: bool = False
     desks: list[SwarmDeskState]
+    equalization_count: int = 0
+    equalization_volume_usdc: float = 0.0
+
+
+# ---------------------------------------------------------------------------
+# Treasury breakdown by tx_type
+# ---------------------------------------------------------------------------
+
+class TxTypeBreakdown(BaseModel):
+    tx_type: str
+    count: int
+    total_volume_usdc: float
+    total_tax_usdc: float
+
+
+class TreasuryBreakdownResponse(BaseModel):
+    accumulated_fees_usdc: float
+    equalization_fees_usdc: float
+    platform_treasury_address: str | None
+    tx_type_breakdown: list[TxTypeBreakdown]
+
+
+# ---------------------------------------------------------------------------
+# Protocol parameters
+# ---------------------------------------------------------------------------
+
+class ProtocolParamsResponse(BaseModel):
+    tax_rate_pct: float
+    tax_rate_fraction: float
+    min_transfer_usdc: float
+    safety_floor_pct: float
+    relay_hops: int
+    candidate_cap: int
+    gas_cost_per_hop_usdc: float
+    execution_mode: str
+    platform_treasury_address: str | None
+    protocol_domain: str
+
+
+# ---------------------------------------------------------------------------
+# Path scanner (expanded non-mutating simulation)
+# ---------------------------------------------------------------------------
+
+class PathScanResult(BaseModel):
+    path: list[str]
+    viable: bool
+    steps: list[ArbitrageStepResult]
+    expected_output_usdc: float
+    total_slippage_usdc: float
+    rejection_reason: str | None = None
+
+
+class ScanPathsRequest(BaseModel):
+    candidate_agents: list[str] = Field(
+        ...,
+        min_length=2,
+        max_length=20,
+        description="Pool of agent_ids to generate routes from",
+    )
+    volume_usdc: float = Field(..., gt=0)
+    slippage_tolerance_pct: float = Field(default=0.005, ge=0.0, le=0.10)
+    path_length: int = Field(
+        default=3,
+        ge=2,
+        le=5,
+        description="Number of hops per path (2–5)",
+    )
+    max_paths: int = Field(
+        default=20,
+        ge=1,
+        le=100,
+        description="Maximum number of distinct paths to evaluate",
+    )
+
+    @field_validator("candidate_agents")
+    @classmethod
+    def _no_blank_ids(cls, v: list[str]) -> list[str]:
+        if any(not aid.strip() for aid in v):
+            raise ValueError("candidate_agents entries must be non-empty strings")
+        return v
+
+
+class ScanPathsResponse(BaseModel):
+    total_paths_checked: int
+    viable_count: int
+    volume_usdc: float
+    slippage_tolerance_pct: float
+    paths: list[PathScanResult]

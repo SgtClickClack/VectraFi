@@ -16,6 +16,7 @@ from routes.analytics import router as analytics_router
 from routes.arbitrage import router as arbitrage_router
 from routes.bank import router as bank_router
 from routes.market import router as market_router
+from routes.protocol import router as protocol_router
 from routes.settlement import router as settlement_router
 from routes.swarm_control import router as swarm_control_router
 from routes.trade import router as trade_router
@@ -80,6 +81,7 @@ app.include_router(trade_router)
 app.include_router(bank_router)
 app.include_router(settlement_router)
 app.include_router(swarm_control_router)
+app.include_router(protocol_router)
 
 
 @app.middleware("http")

@@ -29,6 +29,7 @@ Rebalance execution model (3-hop relay chain):
 
 from __future__ import annotations
 
+import itertools
 import logging
 from decimal import Decimal
 
@@ -43,9 +44,12 @@ from schemas import (
     ArbitrageRouteRequest,
     ArbitrageRouteResponse,
     ArbitrageStepResult,
+    PathScanResult,
     RebalanceHop,
     RebalanceRequest,
     RebalanceResponse,
+    ScanPathsRequest,
+    ScanPathsResponse,
 )
 
 logger = logging.getLogger("vectrafi.arbitrage")
@@ -443,4 +447,88 @@ def rebalance_agent_balance(
         post_balance_usdc=float(post_balance),
         total_tax_usdc=float(total_tax),
         rejection_reason=None,
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/arbitrage/scan-paths
+# ---------------------------------------------------------------------------
+
+@router.post("/scan-paths", response_model=ScanPathsResponse)
+def scan_paths(
+    payload: ScanPathsRequest,
+    db: Session = Depends(get_db),
+) -> ScanPathsResponse:
+    """
+    Expanded non-mutating path simulation across a pool of candidate agents.
+
+    Generates all ordered permutations of `path_length` agents drawn from
+    `candidate_agents` (up to `max_paths` total) and runs each through the
+    dry-run viability check. Every simulation is wrapped in a DB savepoint
+    (`db.begin_nested()`) that is always rolled back, guaranteeing zero state
+    mutation even if the underlying query infrastructure is ever extended to
+    flush speculative rows. RPC or network timeouts are captured per-path so
+    a single slow pool does not abort the entire sweep.
+    """
+    candidates = list(dict.fromkeys(payload.candidate_agents))  # dedupe, preserve order
+
+    # Generate permutations up to max_paths cap — use permutations so each
+    # ordering is treated as a distinct routing path (A→B≠B→A).
+    path_gen = itertools.islice(
+        itertools.permutations(candidates, payload.path_length),
+        payload.max_paths,
+    )
+
+    results: list[PathScanResult] = []
+    viable_count = 0
+
+    for chain in path_gen:
+        chain_list = list(chain)
+        try:
+            # Savepoint guarantees non-mutation even if _simulate_chain is
+            # ever extended to flush speculative writes.
+            sp = db.begin_nested()
+            try:
+                viable, steps, total_slip, expected_out, rejection = _simulate_chain(
+                    db, chain_list, payload.volume_usdc, payload.slippage_tolerance_pct,
+                )
+            finally:
+                sp.rollback()
+        except Exception as exc:
+            # Gracefully degrade on RPC/network timeout or unexpected DB error
+            # so a single bad pool cannot abort the full sweep.
+            logger.warning("scan-paths: path %s raised %s — skipping", chain_list, exc)
+            results.append(PathScanResult(
+                path=chain_list,
+                viable=False,
+                steps=[],
+                expected_output_usdc=0.0,
+                total_slippage_usdc=0.0,
+                rejection_reason=f"simulation error: {exc}",
+            ))
+            continue
+
+        if viable:
+            viable_count += 1
+
+        results.append(PathScanResult(
+            path=chain_list,
+            viable=viable,
+            steps=steps,
+            expected_output_usdc=expected_out,
+            total_slippage_usdc=total_slip,
+            rejection_reason=rejection,
+        ))
+
+    logger.info(
+        "scan-paths: candidates=%d path_len=%d checked=%d viable=%d",
+        len(candidates), payload.path_length, len(results), viable_count,
+    )
+
+    return ScanPathsResponse(
+        total_paths_checked=len(results),
+        viable_count=viable_count,
+        volume_usdc=payload.volume_usdc,
+        slippage_tolerance_pct=payload.slippage_tolerance_pct,
+        paths=results,
     )

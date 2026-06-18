@@ -27,6 +27,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from config import PLATFORM_TREASURY_ADDRESS
 from database import get_db
 from models import AgentWallet, SettlementTransaction, TreasuryState
 from schemas import (
@@ -36,6 +37,8 @@ from schemas import (
     SwarmAnalyticsResponse,
     SwarmDeskState,
     SwarmHeartbeatRequest,
+    TreasuryBreakdownResponse,
+    TxTypeBreakdown,
 )
 
 logger = logging.getLogger("vectrafi.analytics")
@@ -190,6 +193,16 @@ _RE_SWARM = re.compile(
     r"SWARM\s+iter=(\d+)\s+route_checks=(\d+)\s+viable=(\d+)"
 )
 _RE_TS    = re.compile(r"^(\d{2}:\d{2}:\d{2})")
+_RE_GAS_GUARD = re.compile(
+    r"GAS-GUARD\s+(\w+)\s+eth_balance=([\d.]+)"
+)
+_RE_EQUALIZE = re.compile(
+    r"EQUALIZE\s+\w+\s+.*requesting\s+([\d.]+)\s+USDC"
+)
+# Matches: TRANSFER  Alpha   → Beta    $  30.00   50ms  OK  [swarm_equalization]
+_RE_EQ_TRANSFER = re.compile(
+    r"TRANSFER\s+\S+\s+→\s+\S+\s+\$([\d.]+)\s+\S+\s+OK\s+\[swarm_equalization\]"
+)
 
 
 def _tail_log(path: Path, n: int) -> list[str]:
@@ -218,6 +231,8 @@ def swarm_heartbeat(body: SwarmHeartbeatRequest) -> SwarmAnalyticsResponse:
         route_checks=body.route_checks,
         viable_routes=body.viable_routes,
         last_activity=time.strftime("%H:%M:%S", time.localtime()),
+        equalization_count=body.equalization_count,
+        equalization_volume_usdc=body.equalization_volume_usdc,
     )
     _heartbeat_ts = time.monotonic()
     return _heartbeat
@@ -258,6 +273,8 @@ def analytics_swarm() -> SwarmAnalyticsResponse:
                 route_checks=_heartbeat.route_checks,
                 viable_routes=_heartbeat.viable_routes,
                 last_activity=_heartbeat.last_activity,
+                equalization_count=_heartbeat.equalization_count,
+                equalization_volume_usdc=_heartbeat.equalization_volume_usdc,
             )
         # Heartbeat expired — swarm has stopped; fall through to log
 
@@ -272,10 +289,13 @@ def analytics_swarm() -> SwarmAnalyticsResponse:
     scan_lines = _tail_log(_SWARM_LOG, _TAIL_READ)
 
     desks: dict[str, SwarmDeskState] = {}
-    iterations:    int | None = None
-    route_checks:  int | None = None
-    viable_routes: int | None = None
-    last_activity: str | None = None
+    iterations:             int | None = None
+    route_checks:           int | None = None
+    viable_routes:          int | None = None
+    last_activity:          str | None = None
+    equalization_count:     int = 0
+    equalization_volume:    float = 0.0
+    eth_balances:           dict[str, float] = {}
 
     for line in scan_lines:
         m = _RE_DESK.search(line)
@@ -295,6 +315,17 @@ def analytics_swarm() -> SwarmAnalyticsResponse:
         ts = _RE_TS.match(line)
         if ts:
             last_activity = ts.group(1)
+        meq = _RE_EQ_TRANSFER.search(line)
+        if meq:
+            equalization_count   += 1
+            equalization_volume  += float(meq.group(1))
+        mg = _RE_GAS_GUARD.search(line)
+        if mg:
+            eth_balances[mg.group(1)] = float(mg.group(2))
+
+    for dname, eth_bal in eth_balances.items():
+        if dname in desks:
+            desks[dname] = desks[dname].model_copy(update={"eth_balance": eth_bal})
 
     return SwarmAnalyticsResponse(
         swarm_active=bool(desks or iterations is not None),
@@ -304,4 +335,61 @@ def analytics_swarm() -> SwarmAnalyticsResponse:
         route_checks=route_checks,
         viable_routes=viable_routes,
         last_activity=last_activity,
+        equalization_count=equalization_count,
+        equalization_volume_usdc=equalization_volume,
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/analytics/treasury-breakdown
+# ---------------------------------------------------------------------------
+
+@router.get("/treasury-breakdown", response_model=TreasuryBreakdownResponse)
+def analytics_treasury_breakdown(
+    db: Session = Depends(get_db),
+) -> TreasuryBreakdownResponse:
+    """
+    Returns treasury fee accumulation broken down by transaction type.
+
+    Isolates swarm_equalization transactions from organic trades so the
+    telemetry engine can surface accurate platform tax routing metrics.
+    Feeds directly into the visualization panel without shared-memory overhead.
+    """
+    from sqlalchemy import func as sa_func
+
+    treasury = _get_treasury(db)
+
+    rows = (
+        db.query(
+            SettlementTransaction.tx_type,
+            sa_func.count(SettlementTransaction.tx_id).label("cnt"),
+            sa_func.sum(SettlementTransaction.gross_amount_usdc).label("vol"),
+            sa_func.sum(SettlementTransaction.tax_amount_usdc).label("tax"),
+        )
+        .group_by(SettlementTransaction.tx_type)
+        .all()
+    )
+
+    breakdown: list[TxTypeBreakdown] = []
+    equalization_fees: float = 0.0
+
+    for row in rows:
+        tx_type, cnt, vol, tax = row
+        tax_f = float(tax or 0)
+        breakdown.append(TxTypeBreakdown(
+            tx_type=tx_type,
+            count=int(cnt or 0),
+            total_volume_usdc=float(vol or 0),
+            total_tax_usdc=tax_f,
+        ))
+        if tx_type == "swarm_equalization":
+            equalization_fees = tax_f
+
+    breakdown.sort(key=lambda b: b.tx_type)
+
+    return TreasuryBreakdownResponse(
+        accumulated_fees_usdc=float(treasury.accumulated_fees_usdc),
+        equalization_fees_usdc=equalization_fees,
+        platform_treasury_address=PLATFORM_TREASURY_ADDRESS,
+        tx_type_breakdown=breakdown,
     )
