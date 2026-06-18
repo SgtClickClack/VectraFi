@@ -30,7 +30,7 @@ _TRANSFER_URL   = "/api/v1/settlement/transfer"
 
 def _seed_tx(sender_id: str, receiver_id: str, tx_type: str, gross: float = 10.0) -> None:
     """Directly insert a SettlementTransaction row for isolation testing."""
-    tax  = round(gross * 0.015, 8)
+    tax  = round(gross * 0.001, 8)
     net  = gross - tax
     db   = _TestSessionLocal()
     tx   = SettlementTransaction(
@@ -56,8 +56,8 @@ def test_protocol_params_tax_rate(client):
     resp = client.get(_PROTOCOL_URL)
     assert resp.status_code == 200, resp.text
     d = resp.json()
-    assert d["tax_rate_pct"]      == pytest.approx(1.5)
-    assert d["tax_rate_fraction"] == pytest.approx(0.015)
+    assert d["tax_rate_pct"]      == pytest.approx(0.1)
+    assert d["tax_rate_fraction"] == pytest.approx(0.001)
 
 
 def test_protocol_params_topology(client):
@@ -122,7 +122,7 @@ def test_treasury_breakdown_isolates_tx_types(client):
 
 def test_treasury_breakdown_equalization_fees_isolated(client):
     eq_gross = 30.0
-    eq_tax   = round(eq_gross * 0.015, 8)
+    eq_tax   = round(eq_gross * 0.001, 8)
 
     _seed_tx("eq4-donor", "eq4-stalled", "swarm_equalization", gross=eq_gross)
 

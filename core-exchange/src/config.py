@@ -50,6 +50,6 @@ PROTOCOL_DOMAIN: Final[str] = "vectrafi-sandbox-v1"
 # Maximum age (seconds) of a signed request before it is rejected.
 NONCE_WINDOW_SECONDS: Final[int] = 300  # ±5-minute clock-skew window
 
-# Platform treasury wallet address — receives 1.5% tax on every settlement.
+# Platform treasury wallet address — receives 0.1% tax on every settlement.
 # Injected via env in production; left as None in sandbox-only mode.
 PLATFORM_TREASURY_ADDRESS: str | None = os.getenv("PLATFORM_TREASURY_ADDRESS") or None

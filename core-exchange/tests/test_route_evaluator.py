@@ -202,16 +202,16 @@ def test_E17_exactly_at_floor_no_rebalance():
 # ---------------------------------------------------------------------------
 
 def test_E18_tax_covers_overhead_true():
-    # 10 USDC × 1.5% = 0.15 USDC tax; overhead = 0.001 → 0.15 > 0.001 → True
+    # 10 USDC × 0.1% = 0.01 USDC tax; overhead = 0.001 → 0.01 > 0.001 → True
     assert tax_covers_overhead(10.0, estimated_overhead_usdc=0.001) is True
 
 
 def test_E19_tax_below_overhead_false():
-    # 0.01 USDC × 1.5% = 0.00015 USDC tax; overhead = 0.001 → 0.00015 < 0.001 → False
+    # 0.01 USDC × 0.1% = 0.00001 USDC tax; overhead = 0.001 → 0.00001 < 0.001 → False
     assert tax_covers_overhead(0.01, estimated_overhead_usdc=0.001) is False
 
 
 def test_E20_tax_equal_overhead_false():
     # Strict inequality: tax must be *greater than* overhead, not equal.
-    # 1.0 USDC × 1.5% = 0.015; overhead = 0.015 → not strictly greater → False
-    assert tax_covers_overhead(1.0, estimated_overhead_usdc=0.015) is False
+    # 1.0 USDC × 0.1% = 0.001; overhead = 0.001 → not strictly greater → False
+    assert tax_covers_overhead(1.0, estimated_overhead_usdc=0.001) is False

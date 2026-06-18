@@ -19,7 +19,7 @@ router = APIRouter(prefix="/api/v1/protocol", tags=["protocol"])
 
 # Mirror the constants from settlement.py and arbitrage.py so external
 # agents always receive the authoritative values in force at runtime.
-_TAX_RATE_FRACTION:   float = 0.015          # 1.5%
+_TAX_RATE_FRACTION:   float = 0.001          # 0.1%
 _MIN_TRANSFER_USDC:   float = 0.0001
 _SAFETY_FLOOR_PCT:    float = 0.005          # 0.5% default slippage floor
 _RELAY_HOPS:          int   = 3
@@ -33,7 +33,7 @@ def protocol_params() -> ProtocolParamsResponse:
     Returns all protocol parameters required for external agent route planning.
 
     Includes:
-    - Current 1.5% platform transaction tax rate.
+    - Current 0.1% platform transaction tax rate.
     - Minimum transfer floor (dust-splitting prevention).
     - Default safety floor for rebalance trigger evaluation.
     - Relay topology constants (hops, candidate cap, gas cost).

@@ -43,10 +43,10 @@ def test_transfer_tax_math(client):
 
     d = resp.json()
     assert d["gross_amount_usdc"]    == pytest.approx(100.0, rel=1e-6)
-    assert d["tax_amount_usdc"]      == pytest.approx(1.5,   rel=1e-6)   # 1.5% of 100
-    assert d["net_amount_usdc"]      == pytest.approx(98.5,  rel=1e-6)
+    assert d["tax_amount_usdc"]      == pytest.approx(0.1,   rel=1e-6)   # 0.1% of 100
+    assert d["net_amount_usdc"]      == pytest.approx(99.9,  rel=1e-6)
     assert d["sender_balance_usdc"]   == pytest.approx(400.0, rel=1e-6)
-    assert d["receiver_balance_usdc"] == pytest.approx(98.5,  rel=1e-6)
+    assert d["receiver_balance_usdc"] == pytest.approx(99.9,  rel=1e-6)
 
 
 # ---------------------------------------------------------------------------
@@ -179,7 +179,7 @@ def test_treasury_accumulates_across_transfers(client):
         }
         resp = client.post(_TRANSFER_URL, json=body, headers={"X-VectraFi-Signature": sign_body(acct_s, body)})
         assert resp.status_code == 200
-        total_expected_tax += round(amount * 0.015, 8)
+        total_expected_tax += round(amount * 0.001, 8)
         last_resp = resp
 
     # Treasury balance must have grown by at least our total tax contribution
@@ -207,10 +207,10 @@ def test_claim_bounty_split_and_tax(client):
 
     # counterpart_gross ≈ 100.0 (300 * 1/3)
     assert d["counterpart_gross_usdc"]  == pytest.approx(100.0, rel=1e-4)
-    # 1.5% tax on 100.0 = 1.5
-    assert d["tax_amount_usdc"]         == pytest.approx(1.5,   rel=1e-4)
-    # counterpart receives 98.5 net
-    assert d["counterpart_net_usdc"]    == pytest.approx(98.5,  rel=1e-4)
+    # 0.1% tax on 100.0 = 0.1
+    assert d["tax_amount_usdc"]         == pytest.approx(0.1,   rel=1e-4)
+    # counterpart receives 99.9 net
+    assert d["counterpart_net_usdc"]    == pytest.approx(99.9,  rel=1e-4)
     # claimant keeps 200 of the bounty, balance drops by the 100 transferred
     assert d["claimant_share_usdc"]     == pytest.approx(200.0, rel=1e-4)
     assert d["claimant_balance_usdc"]   == pytest.approx(400.0, rel=1e-4)
