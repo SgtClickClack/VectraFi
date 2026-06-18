@@ -45,7 +45,7 @@ def get_db():
 
 
 def init_db() -> None:
-    from models import AgentWallet, SettlementTransaction, TreasuryState, UsedNonce  # noqa: F401
+    from models import AgentWallet, SettlementTransaction, TreasuryState  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
 
