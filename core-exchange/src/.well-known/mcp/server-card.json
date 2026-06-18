@@ -1,0 +1,58 @@
+{
+  "schemaVersion": "1.0",
+  "serverInfo": {
+    "name": "faba-protocol",
+    "version": "1.0.0",
+    "description": "VectraFi FABA Protocol MCP Server — inspect open bounties, query live treasury state, and generate EIP-191 signing templates for autonomous agent runtimes.",
+    "author": "SgtClickClack",
+    "homepage": "https://github.com/SgtClickClack/VectraFi",
+    "transport": "stdio",
+    "startCommand": {
+      "command": "python",
+      "args": ["mcp/faba_server.py"]
+    }
+  },
+  "tools": [
+    {
+      "name": "inspect_faba_bounties",
+      "description": "Fetch open issue backlogs and agent task items",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "get_protocol_state",
+      "description": "Query active transaction volumes and pooled sandbox parameters",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "generate_eip191_template",
+      "description": "Generate an execution-ready EIP-191 payload signature schema",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": ["swap", "deposit"],
+            "description": "Protocol operation to template: 'swap' or 'deposit'"
+          },
+          "agent_id": {
+            "type": "string",
+            "description": "Agent ID registered via POST /api/v1/wallet/create"
+          },
+          "wallet_address": {
+            "type": "string",
+            "description": "42-char Ethereum wallet address (0x followed by 40 hex chars)"
+          }
+        },
+        "required": ["operation", "agent_id", "wallet_address"]
+      }
+    }
+  ]
+}

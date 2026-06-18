@@ -1,0 +1,154 @@
+{
+  "schema_version": "1.0.0",
+  "generated_at": "2026-06-19T03:17:17Z",
+  "protocol": {
+    "name": "VectraFi FABA Protocol",
+    "class": "M2M Liquidity / Agent-Native DeFi",
+    "description": "VectraFi is an autonomous M2M liquidity protocol (FABA). Agent wallets execute EIP-191-signed swaps, vault deposits, and peer-to-peer USDC settlements with a 1.5% micro-tax routed to an on-chain treasury. Fully permissionless — any agent runtime may provision a wallet and begin transacting immediately.",
+    "api_base_url": "https://web-production-c8197.up.railway.app",
+    "openapi_url": "https://web-production-c8197.up.railway.app/openapi.json",
+    "docs_url": "https://web-production-c8197.up.railway.app/docs",
+    "github": "https://github.com/SgtClickClack/VectraFi"
+  },
+  "api_info": {
+    "title": "VectraFi Core Exchange",
+    "version": "0.3.0",
+    "total_paths": 20
+  },
+  "authentication": {
+    "scheme": "EIP-191 Ethereum personal-sign",
+    "header": "X-VectraFi-Signature",
+    "algorithm": "eth_sign over compact JSON body bytes",
+    "replay_protection": "nonce + issued_at + chain_id in every signed payload",
+    "step_by_step": {
+      "1": "body_bytes = json.dumps(payload, separators=(',', ':')).encode('utf-8')",
+      "2": "msg = encode_defunct(body_bytes)",
+      "3": "sig = Account.sign_message(msg, private_key=agent_private_key).signature.hex()",
+      "4": "send sig in header X-VectraFi-Signature"
+    },
+    "errors": {
+      "400": "malformed or missing JSON body",
+      "401": "signature missing, invalid, or address mismatch",
+      "404": "agent_id not registered",
+      "422": "request schema validation failure"
+    }
+  },
+  "featured_endpoints": [
+    {
+      "path": "/api/v1/settlement/transfer",
+      "method": "POST",
+      "summary": "Peer-to-peer USDC transfer — 1.5% tax settlement",
+      "description": "Execute a signature-verified P2P USDC transfer. 1.5% micro-tax deducted and routed to treasury. Pessimistic row-locking prevents double-spend. Optional on-chain settlement via Base L2 ERC-20 bridge.",
+      "auth_required": true
+    },
+    {
+      "path": "/api/v1/arbitrage/route-path",
+      "method": "POST",
+      "summary": "Cross-desk arbitrage route discovery",
+      "description": "Dry-run viability check for a proposed cross-agent arbitrage route. No funds moved. Evaluates balance floors, gas friction, and PENDING_SYNC blocks across the full agent chain.",
+      "auth_required": false
+    },
+    {
+      "path": "/api/v1/wallet/create",
+      "method": "POST",
+      "summary": "Provision an agent wallet",
+      "description": "Provision a new agent wallet with cryptographic keypair and starter balance. private_key returned once and never stored by the protocol.",
+      "auth_required": false
+    },
+    {
+      "path": "/api/v1/trade/swap",
+      "method": "POST",
+      "summary": "USDC <-> HBAR swap (zero protocol fee)",
+      "description": "Execute a signed spot swap between USDC and HBAR at live Coinbase market prices. Zero protocol fee — permanently fee-free in this protocol version.",
+      "auth_required": true
+    },
+    {
+      "path": "/api/v1/bank/deposit",
+      "method": "POST",
+      "summary": "Vault deposit — 0.25% fee, 80/20 treasury split",
+      "description": "Move USDC from liquid balance to yield vault. 0.25% protocol fee split 80% creator / 20% agent bounty pool.",
+      "auth_required": true
+    },
+    {
+      "path": "/api/v1/market/prices",
+      "method": "GET",
+      "summary": "Live price feed — ETH, USDC, HBAR",
+      "description": "Live spot rates fetched from Coinbase API with 25-second TTL cache and automatic fallback. No auth required.",
+      "auth_required": false
+    },
+    {
+      "path": "/api/v1/settlement/analytics",
+      "method": "GET",
+      "summary": "Public treasury analytics (no auth required)",
+      "description": "Aggregate settlement statistics: accumulated fees, transaction count, total volume, active wallet count.",
+      "auth_required": false
+    }
+  ],
+  "all_paths": [
+    {"method": "GET",  "path": "/api/v1/analytics/recent-transactions"},
+    {"method": "GET",  "path": "/api/v1/analytics/stats"},
+    {"method": "GET",  "path": "/api/v1/analytics/swarm"},
+    {"method": "GET",  "path": "/api/v1/analytics/treasury"},
+    {"method": "GET",  "path": "/api/v1/analytics/treasury-breakdown"},
+    {"method": "POST", "path": "/api/v1/arbitrage/rebalance"},
+    {"method": "POST", "path": "/api/v1/arbitrage/route-path"},
+    {"method": "POST", "path": "/api/v1/arbitrage/scan-paths"},
+    {"method": "POST", "path": "/api/v1/bank/deposit"},
+    {"method": "GET",  "path": "/api/v1/market/prices"},
+    {"method": "GET",  "path": "/api/v1/protocol/params"},
+    {"method": "GET",  "path": "/api/v1/settlement/analytics"},
+    {"method": "POST", "path": "/api/v1/settlement/claim-bounty"},
+    {"method": "POST", "path": "/api/v1/settlement/transfer"},
+    {"method": "POST", "path": "/api/v1/swarm/start"},
+    {"method": "GET",  "path": "/api/v1/swarm/status"},
+    {"method": "POST", "path": "/api/v1/swarm/stop"},
+    {"method": "POST", "path": "/api/v1/trade/swap"},
+    {"method": "POST", "path": "/api/v1/wallet/create"},
+    {"method": "GET",  "path": "/health"}
+  ],
+  "financial_model": {
+    "settlement_tax_rate_pct": 1.5,
+    "deposit_fee_rate_pct": 0.25,
+    "swap_fee_rate_pct": 0.0,
+    "treasury_split": {
+      "creator_pct": 80,
+      "bounty_pool_pct": 20
+    },
+    "min_transfer_usdc": 0.0001,
+    "supported_assets": ["USDC", "HBAR", "ETH"],
+    "tax_rounding": "ROUND_UP at 8dp — protocol-favorable, eliminates dust evasion",
+    "alpha_phase_notice": "Treasury holding addresses are sandbox placeholders. Fees accumulate in SQLite only until L2 governance is ratified."
+  },
+  "routing_parameters": {
+    "relay_hops": 3,
+    "candidate_cap": 15,
+    "gas_cost_per_hop_usdc": 0.03,
+    "tax_net_multiplier": 0.985,
+    "expected_output_after_3_hops_pct": 95.57
+  },
+  "agent_onboarding": [
+    "POST https://web-production-c8197.up.railway.app/api/v1/wallet/create — provision wallet, receive agent_id",
+    "Store private_key securely — returned once, never stored by protocol",
+    "GET  https://web-production-c8197.up.railway.app/api/v1/market/prices — fetch live prices",
+    "POST https://web-production-c8197.up.railway.app/api/v1/trade/swap — execute signed swap (zero fee)",
+    "POST https://web-production-c8197.up.railway.app/api/v1/settlement/transfer — signed P2P transfer (1.5% tax)"
+  ],
+  "capability_tags": [
+    "defi",
+    "m2m-liquidity",
+    "autonomous-agent",
+    "eip191-auth",
+    "usdc-settlement",
+    "arbitrage",
+    "yield",
+    "base-l2"
+  ],
+  "discovery_links": {
+    "openapi_spec": "https://web-production-c8197.up.railway.app/openapi.json",
+    "swagger_ui": "https://web-production-c8197.up.railway.app/docs",
+    "faba_capabilities": "https://web-production-c8197.up.railway.app/.well-known/faba-capabilities.json",
+    "mcp_server_card": "https://web-production-c8197.up.railway.app/.well-known/mcp/server-card.json",
+    "github": "https://github.com/SgtClickClack/VectraFi",
+    "agent_registry": "https://github.com/SgtClickClack/VectraFi/blob/main/AGENTS_REGISTRY.md"
+  }
+}

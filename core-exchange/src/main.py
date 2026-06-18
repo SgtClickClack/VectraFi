@@ -7,8 +7,10 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
-_TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
+_TEMPLATES_DIR   = Path(__file__).resolve().parent / "templates"
+_WELL_KNOWN_DIR  = Path(__file__).resolve().parent / ".well-known"
 
 from database import init_db
 from routes.analytics import record_latency
@@ -49,29 +51,52 @@ app = FastAPI(
 
 # ---------------------------------------------------------------------------
 # CORS
-# ALLOWED_ORIGINS env var: comma-separated list of permitted origins.
-# Local dev defaults are always included so unset == safe for development.
+# ALLOWED_ORIGINS env var controls access policy:
+#   "*"                → wildcard mode: any origin, no credentials (agentic/public)
+#   unset or empty     → dev defaults only (localhost), with credentials
+#   comma-separated    → explicit allowlist, with credentials
+#
+# Wildcard mode intentionally omits allow_credentials because starlette
+# rejects the combination of allow_origins=["*"] + allow_credentials=True.
+# Programmatic M2M agents do not use cookie-based auth so this is safe.
 # ---------------------------------------------------------------------------
-_DEFAULT_ORIGINS = [
-    "http://localhost:3000",
-    "http://localhost:8000",
-    "http://127.0.0.1:3000",
-    "http://127.0.0.1:8000",
+_AGENTIC_HEADERS = [
+    "Content-Type",
+    "Authorization",
+    "X-VectraFi-Signature",
+    "X-Agent-ID",
+    "X-Request-ID",
 ]
-_env_origins = [
-    o.strip()
-    for o in os.getenv("ALLOWED_ORIGINS", "").split(",")
-    if o.strip()
-]
-_origins = list(dict.fromkeys(_DEFAULT_ORIGINS + _env_origins))  # dedupe, preserve order
+_AGENTIC_METHODS = ["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD"]
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_origins,
-    allow_credentials=True,
-    allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type", "X-VectraFi-Signature"],
-)
+_raw_allowed = os.getenv("ALLOWED_ORIGINS", "").strip()
+_wildcard_cors = _raw_allowed == "*"
+
+if _wildcard_cors:
+    # Public / agentic mode — any origin, all methods and headers allowed.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+else:
+    _DEFAULT_ORIGINS = [
+        "http://localhost:3000",
+        "http://localhost:8000",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:8000",
+    ]
+    _env_origins = [o.strip() for o in _raw_allowed.split(",") if o.strip()]
+    _origins = list(dict.fromkeys(_DEFAULT_ORIGINS + _env_origins))  # dedupe, preserve order
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_origins,
+        allow_credentials=True,
+        allow_methods=_AGENTIC_METHODS,
+        allow_headers=_AGENTIC_HEADERS,
+    )
 
 app.include_router(analytics_router)
 app.include_router(arbitrage_router)
@@ -82,6 +107,12 @@ app.include_router(bank_router)
 app.include_router(settlement_router)
 app.include_router(swarm_control_router)
 app.include_router(protocol_router)
+
+# Passive agent discovery — served at /.well-known/agent.json (and siblings).
+# Mounted after all API routers so the static path cannot shadow any endpoint.
+# StaticFiles resolves relative to the directory where uvicorn starts (core-exchange/src/).
+if _WELL_KNOWN_DIR.is_dir():
+    app.mount("/.well-known", StaticFiles(directory=str(_WELL_KNOWN_DIR)), name="well-known")
 
 
 @app.middleware("http")
@@ -104,7 +135,12 @@ async def log_requests(request: Request, call_next):
 def on_startup() -> None:
     init_db()
     mode = "live_rpc" if is_live_mode() else "sandbox"
-    logger.info("VectraFi core exchange started — mode=%s SQLite backend ready", mode)
+    cors_mode = "wildcard (*)" if _wildcard_cors else "restricted origins"
+    logger.info(
+        "VectraFi core exchange started — mode=%s CORS=%s "
+        "OpenAPI: /openapi.json  Swagger UI: /docs",
+        mode, cors_mode,
+    )
 
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
