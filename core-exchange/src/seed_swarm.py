@@ -49,6 +49,7 @@ if str(_THIS_DIR) not in sys.path:
     sys.path.insert(0, str(_THIS_DIR))
 
 from config import DEFAULT_USDC_BALANCE, PROTOCOL_DOMAIN
+from services.web3_provider import get_on_chain_eth_balance, is_live_mode
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -76,6 +77,9 @@ _REBALANCE_VOLUME  = 50.0
 _CB_MAX_CONSECUTIVE_ERRORS: int   = int(os.getenv("SWARM_CB_MAX_ERRORS",       "5"))
 # Halt if any desk's balance falls below this fraction of its initial capital.
 _CB_MIN_BALANCE_PCT:        float = float(os.getenv("SWARM_CB_MIN_BALANCE_PCT", "0.80"))
+# Minimum ETH gas balance per desk wallet before live transfers are allowed to fire.
+# ~0.002 ETH ≈ 300k gas units on Base Sepolia; env-overridable via SWARM_CB_MIN_GAS_ETH.
+_CB_MIN_GAS_ETH:            float = float(os.getenv("SWARM_CB_MIN_GAS_ETH",    "0.002"))
 
 # Agent identities — fixed prefix so re-runs reuse existing wallets (409 = ok).
 _DESK_NAMES = ("Alpha", "Beta", "Gamma")
@@ -414,6 +418,41 @@ def _check_circuit_breakers(desks: list[DeskState]) -> None:
                 )
 
 
+async def _check_gas_guard(desks: list[DeskState]) -> None:
+    """
+    Guard 3 — minimum ETH gas balance per desk wallet (live RPC mode only).
+
+    Skips silently in dry-run mode or when no RPC provider is connected.
+    Runs get_on_chain_eth_balance via run_in_executor so the synchronous
+    Web3 HTTP call does not block the async event loop.
+    Raises CircuitBreakerTripped if any desk wallet is below _CB_MIN_GAS_ETH.
+    """
+    if _DRY_RUN or not is_live_mode():
+        return
+
+    loop = asyncio.get_event_loop()
+    for desk in desks:
+        eth_bal: float = await loop.run_in_executor(
+            None, get_on_chain_eth_balance, desk.wallet_address
+        )
+
+        log.debug(
+            "GAS-GUARD  %-7s  eth_balance=%.6f ETH  threshold=%.6f ETH",
+            desk.name, eth_bal, _CB_MIN_GAS_ETH,
+        )
+
+        if eth_bal < _CB_MIN_GAS_ETH:
+            log.critical(
+                "CIRCUIT-BREAKER  MIN-GAS  %-7s  "
+                "eth_balance=%.6f ETH < threshold=%.6f ETH — EMERGENCY SHUTDOWN",
+                desk.name, eth_bal, _CB_MIN_GAS_ETH,
+            )
+            raise CircuitBreakerTripped(
+                f"desk {desk.name} ETH gas balance {eth_bal:.6f} ETH "
+                f"below minimum {_CB_MIN_GAS_ETH:.6f} ETH"
+            )
+
+
 async def _post_heartbeat(
     client: httpx.AsyncClient,
     desks:  list[DeskState],
@@ -492,6 +531,7 @@ async def swarm_loop(desks: list[DeskState]) -> None:
                         d.consecutive_errors,
                     )
                 await _post_heartbeat(client, desks, stats)
+                await _check_gas_guard(desks)
 
             # 5. Circuit-breaker evaluation (every iteration)
             _check_circuit_breakers(desks)
