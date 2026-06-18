@@ -56,9 +56,9 @@ logger = logging.getLogger("vectrafi.arbitrage")
 router = APIRouter(prefix="/api/v1/arbitrage", tags=["arbitrage"])
 
 _RELAY_HOPS         = 3
-_CANDIDATE_CAP      = 10              # top-N agents queried as relay candidates
+_CANDIDATE_CAP      = 15              # top-N agents queried as relay candidates
 _TAX_NET            = Decimal("0.985")  # 1 − 1.5%
-_GAS_COST_PER_HOP   = Decimal("0.05")  # static L2 gas friction per leg (USDC)
+_GAS_COST_PER_HOP   = Decimal("0.03")  # static L2 gas friction per leg (USDC)
 
 
 # ---------------------------------------------------------------------------
