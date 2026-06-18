@@ -1,7 +1,8 @@
+import json
 import uuid
 from decimal import Decimal
 
-from sqlalchemy import Integer, Numeric, String, UniqueConstraint
+from sqlalchemy import Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database import Base
@@ -57,6 +58,28 @@ class UsedNonce(Base):
     __table_args__ = (
         UniqueConstraint("agent_id", "nonce", name="uq_used_nonce_agent_nonce"),
     )
+
+
+class NegotiationClaim(Base):
+    """Persists each negotiate-intent submission for lifecycle tracking.
+
+    Status lifecycle:
+        queued → evaluating → granted | rejected
+    """
+    __tablename__ = "negotiation_claims"
+
+    negotiation_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    agent_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    intent_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="queued")
+    requested_liquidity_usdc: Mapped[Decimal | None] = mapped_column(Numeric(28, 8), nullable=True)
+    proposed_toll_share_pct: Mapped[Decimal | None] = mapped_column(Numeric(10, 8), nullable=True)
+    target_corridor: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    evaluation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    evaluated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 # TODO (faba-agent-bounty): issue #4 — add YieldRoute model with fields:

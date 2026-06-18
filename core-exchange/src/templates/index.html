@@ -539,6 +539,166 @@
     .proc-running { background: rgba(16,185,129,.15); color: var(--green); border: 1px solid rgba(16,185,129,.3); }
     .proc-stopped { background: rgba(100,116,139,.12); color: var(--muted); border: 1px solid rgba(100,116,139,.25); }
     .proc-error   { background: rgba(239,68,68,.12);   color: var(--red);   border: 1px solid rgba(239,68,68,.25); }
+
+    /* ── TREASURY HERO ── */
+    .treasury-hero {
+      background: linear-gradient(135deg, rgba(14,165,233,.12), rgba(139,92,246,.08));
+      border: 1px solid rgba(14,165,233,.3);
+      border-radius: 10px;
+      padding: 18px 20px;
+      margin-bottom: 14px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .treasury-hero::after {
+      content: '1.5%';
+      position: absolute;
+      right: 14px;
+      bottom: 6px;
+      font-size: 42px;
+      font-weight: 900;
+      color: rgba(14,165,233,.07);
+      letter-spacing: -1px;
+      pointer-events: none;
+      user-select: none;
+      line-height: 1;
+    }
+
+    .treasury-hero-label {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--accent);
+      margin-bottom: 8px;
+      white-space: nowrap;
+    }
+
+    .treasury-hero-value {
+      font-size: 28px;
+      font-weight: 800;
+      letter-spacing: -1px;
+      font-variant-numeric: tabular-nums;
+      color: var(--text);
+      line-height: 1;
+    }
+
+    .treasury-hero-sub {
+      margin-top: 5px;
+      font-size: 11px;
+      color: var(--text-dim);
+      white-space: nowrap;
+    }
+
+    /* ── DESK STALL ALERT ── */
+    .desk-card.desk-stalled {
+      border-color: rgba(239,68,68,.45);
+      animation: stall-pulse 1.8s ease-in-out infinite;
+    }
+
+    @keyframes stall-pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,.0); }
+      50%       { box-shadow: 0 0 0 4px rgba(239,68,68,.18); }
+    }
+
+    .desk-stall-badge {
+      display: inline-block;
+      padding: 1px 7px;
+      border-radius: 20px;
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.6px;
+      text-transform: uppercase;
+      background: rgba(239,68,68,.18);
+      color: var(--red);
+      border: 1px solid rgba(239,68,68,.35);
+      vertical-align: middle;
+      margin-left: 4px;
+    }
+
+    .desk-balances {
+      display: flex;
+      gap: 10px;
+      align-items: flex-end;
+      margin-bottom: 8px;
+    }
+
+    .desk-bal-block { display: flex; flex-direction: column; gap: 2px; }
+
+    .desk-bal-label {
+      font-size: 9px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--muted);
+    }
+
+    .desk-bal-value {
+      font-size: 17px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      font-variant-numeric: tabular-nums;
+      line-height: 1;
+    }
+
+    .desk-divider {
+      width: 1px;
+      background: var(--border);
+      align-self: stretch;
+      margin-bottom: 2px;
+    }
+
+    /* ── EQUALIZATION STREAM ── */
+    .eq-stream-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+
+    .eq-stream-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--purple);
+    }
+
+    .eq-stats {
+      display: flex;
+      gap: 16px;
+      align-items: center;
+    }
+
+    .eq-stat {
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+
+    .eq-stat b { color: var(--purple); }
+
+    .eq-terminal {
+      background: rgba(139,92,246,.05);
+      border: 1px solid rgba(139,92,246,.25);
+      border-radius: 8px;
+      padding: 10px 14px;
+      height: 120px;
+      overflow-y: auto;
+      font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', monospace;
+      font-size: 11px;
+      line-height: 1.65;
+      white-space: pre-wrap;
+      word-break: break-all;
+      margin-bottom: 16px;
+    }
+
+    .eq-terminal::-webkit-scrollbar { width: 6px; }
+    .eq-terminal::-webkit-scrollbar-track { background: transparent; }
+    .eq-terminal::-webkit-scrollbar-thumb { background: rgba(139,92,246,.3); border-radius: 3px; }
+
+    .log-equalize { color: var(--purple); font-weight: 600; }
+    .log-equalize-warn { color: var(--amber); }
   </style>
 </head>
 <body>
@@ -712,19 +872,29 @@
   // ── Treasury panel ────────────────────────────────────────────────────────
 
   function renderTreasury(data) {
-    $('treasury-body').innerHTML = `
-      <div class="stat-grid">
-        <div class="stat">
-          <div class="stat-label">Accumulated Fees</div>
-          <div class="stat-value accent">$${fmtUSDC(data.accumulated_fees_usdc)}</div>
-          <div class="stat-sub">USDC protocol fees</div>
-        </div>
-        <div class="stat">
-          <div class="stat-label">Total Volume Settled</div>
-          <div class="stat-value green">$${fmtUSDC(data.total_volume_processed_usdc)}</div>
-          <div class="stat-sub">Gross USDC processed</div>
-        </div>
-      </div>`;
+    const fees   = data.accumulated_fees_usdc ?? 0;
+    const volume = data.total_volume_processed_usdc ?? 0;
+    const taxPct = volume > 0 ? ((fees / volume) * 100).toFixed(3) : '1.500';
+    const el = $('treasury-body');
+    el.className = '';
+    el.innerHTML =
+      `<div class="treasury-hero">` +
+        `<div class="treasury-hero-label">Protocol Settlement Tax &mdash; 1.5% Rate</div>` +
+        `<div class="treasury-hero-value">$${fmtUSDC(fees)}</div>` +
+        `<div class="treasury-hero-sub">USDC accumulated &nbsp;&middot;&nbsp; effective rate ${taxPct}%</div>` +
+      `</div>` +
+      `<div class="stat-grid">` +
+        `<div class="stat">` +
+          `<div class="stat-label">Total Volume Settled</div>` +
+          `<div class="stat-value green">$${fmtUSDC(volume)}</div>` +
+          `<div class="stat-sub">Gross USDC processed</div>` +
+        `</div>` +
+        `<div class="stat">` +
+          `<div class="stat-label">Tax Captured</div>` +
+          `<div class="stat-value accent">$${fmtUSDC(fees)}</div>` +
+          `<div class="stat-sub">platform treasury balance</div>` +
+        `</div>` +
+      `</div>`;
   }
 
   function renderTreasuryConnecting() {
@@ -835,6 +1005,9 @@
     const s = escHtml(raw);
     if (/\bERROR\b/.test(raw))                    return `<span class="log-error">${s}</span>`;
     if (/\bWARNING\b/.test(raw))                  return `<span class="log-warn">${s}</span>`;
+    if (/\bEQUALIZE\b.*stalled|no eligible/.test(raw)) return `<span class="log-equalize-warn">${s}</span>`;
+    if (/\bEQUALIZE\b/.test(raw))                return `<span class="log-equalize">${s}</span>`;
+    if (/TRANSFER.*swarm_equalization/.test(raw)) return `<span class="log-equalize">${s}</span>`;
     if (/TRANSFER.*\bOK\b/.test(raw))             return `<span class="log-ok">${s}</span>`;
     if (/TRANSFER.*\bERR\b/.test(raw))            return `<span class="log-warn">${s}</span>`;
     if (/\bREBALANCE\b.*post_balance/.test(raw))  return `<span class="log-rebalance">${s}</span>`;
@@ -850,23 +1023,53 @@
     return 'var(--red)';
   }
 
+  const _STALL_USDC = 30;   // mirrors _EQ_STALL_THRESHOLD_USDC default
+
+  function _fmtEth(eth) {
+    if (!eth) return null;
+    return eth.toFixed(6) + ' ETH';
+  }
+
   function renderSwarm(data) {
     const deskMap = {};
     (data.desks || []).forEach(d => { deskMap[d.name] = d; });
 
     const deskCards = _KNOWN_DESKS.map(name => {
-      const d     = deskMap[name];
-      const color = _DESK_COLORS[name] || 'var(--accent)';
-      const bal   = d ? d.balance_usdc : null;
-      const ok    = d ? d.transfers_ok  : '—';
-      const err   = d ? d.transfers_err : '—';
-      const balHtml = bal !== null
-        ? `<div class="desk-balance" style="color:${_balColor(bal)}">$${fmtUSDC(bal)}</div>`
-        : `<div class="desk-balance" style="color:var(--muted);font-size:14px">Offline</div>`;
+      const d      = deskMap[name];
+      const color  = _DESK_COLORS[name] || 'var(--accent)';
+      const bal    = d ? d.balance_usdc : null;
+      const eth    = d ? d.eth_balance  : null;
+      const ok     = d ? d.transfers_ok  : '—';
+      const err    = d ? d.transfers_err : '—';
+      const stalled = bal !== null && bal < _STALL_USDC;
+
+      let balancesHtml;
+      if (bal === null) {
+        balancesHtml = `<div class="desk-bal-value" style="color:var(--muted);font-size:13px">Offline</div>`;
+      } else {
+        const usdcColor = _balColor(bal);
+        const ethColor  = eth && eth > 0 ? (eth > 0.005 ? 'var(--green)' : 'var(--amber)') : 'var(--muted)';
+        const ethDisplay = eth && eth > 0 ? _fmtEth(eth) : '—';
+        balancesHtml = `
+          <div class="desk-balances">
+            <div class="desk-bal-block">
+              <div class="desk-bal-label">USDC</div>
+              <div class="desk-bal-value" style="color:${usdcColor}">$${fmtUSDC(bal)}</div>
+            </div>
+            <div class="desk-divider"></div>
+            <div class="desk-bal-block">
+              <div class="desk-bal-label">Gas (ETH)</div>
+              <div class="desk-bal-value" style="color:${ethColor};font-size:13px">${ethDisplay}</div>
+            </div>
+          </div>`;
+      }
+
+      const stallBadge = stalled ? '<span class="desk-stall-badge">Stalled</span>' : '';
+
       return `
-        <div class="desk-card" style="--desk-color:${color}">
-          <div class="desk-name">${name}</div>
-          ${balHtml}
+        <div class="desk-card${stalled ? ' desk-stalled' : ''}" style="--desk-color:${color}">
+          <div class="desk-name">${name}${stallBadge}</div>
+          ${balancesHtml}
           <div class="desk-meta">
             ok <b style="color:var(--green)">${ok}</b>
             &nbsp;&middot;&nbsp;
@@ -879,6 +1082,8 @@
     const checks  = data.route_checks  != null ? fmtNum(data.route_checks)  : '—';
     const viable  = data.viable_routes != null ? fmtNum(data.viable_routes) : '—';
     const lastAct = data.last_activity || '—';
+    const eqCount = data.equalization_count ?? 0;
+    const eqVol   = data.equalization_volume_usdc ?? 0;
     const statusBadge = data.swarm_active
       ? '<span class="badge badge-live" style="font-size:10px;padding:2px 8px"><span class="dot"></span>Running</span>'
       : '<span class="badge badge-syncing" style="font-size:10px;padding:2px 8px"><span class="dot"></span>Idle</span>';
@@ -902,12 +1107,38 @@
           <div class="swarm-stat-value" style="color:var(--green)">${viable}</div>
         </div>
         <div class="swarm-stat">
+          <div class="swarm-stat-label">Equalizations</div>
+          <div class="swarm-stat-value" style="color:var(--purple)">${fmtNum(eqCount)}</div>
+        </div>
+        <div class="swarm-stat">
           <div class="swarm-stat-label">Last Activity</div>
           <div class="swarm-stat-value" style="color:var(--muted);font-size:12px">${lastAct}</div>
         </div>
       </div>`;
 
-    const lines = data.log_lines || [];
+    // Equalization stream — filter log_lines for EQUALIZE events only
+    const allLines = data.log_lines || [];
+    const eqLines  = allLines.filter(l => /\bEQUALIZ/i.test(l));
+    const eqTermContent = eqLines.length === 0
+      ? '<span class="log-heartbeat">No equalization events in current log window.</span>'
+      : eqLines.map(l => {
+          const s = escHtml(l);
+          return /stalled|no eligible/i.test(l)
+            ? `<span class="log-equalize-warn">${s}</span>`
+            : `<span class="log-equalize">${s}</span>`;
+        }).join('\n');
+
+    const eqStream = `
+      <div class="eq-stream-header">
+        <span class="eq-stream-label">&#x21C4; Equalization Stream</span>
+        <div class="eq-stats">
+          <span class="eq-stat">Events: <b>${fmtNum(eqCount)}</b></span>
+          <span class="eq-stat">Volume: <b>$${fmtUSDC(eqVol)}</b></span>
+        </div>
+      </div>
+      <div class="eq-terminal" id="eq-terminal">${eqTermContent}</div>`;
+
+    const lines = allLines;
     const termContent = lines.length === 0
       ? '<span class="log-heartbeat">No log entries yet — start seed_swarm.py to populate this terminal.</span>'
       : lines.map(colorLogLine).join('\n');
@@ -915,11 +1146,14 @@
     $('swarm-body').innerHTML = `
       ${statsBar}
       <div class="desk-grid">${deskCards}</div>
+      ${eqStream}
       <div class="swarm-terminal-label">Live Agent Log — swarm_activity.log</div>
       <div class="swarm-terminal" id="swarm-terminal">${termContent}</div>`;
 
     const term = $('swarm-terminal');
     if (term) term.scrollTop = term.scrollHeight;
+    const eqTerm = $('eq-terminal');
+    if (eqTerm) eqTerm.scrollTop = eqTerm.scrollHeight;
     _swarmFirstPoll = false;
   }
 

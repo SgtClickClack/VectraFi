@@ -45,7 +45,7 @@ def get_db():
 
 
 def init_db() -> None:
-    from models import AgentWallet, SettlementTransaction, TreasuryState, UsedNonce  # noqa: F401
+    from models import AgentWallet, NegotiationClaim, SettlementTransaction, TreasuryState, UsedNonce  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
 
@@ -53,16 +53,29 @@ def init_db() -> None:
     # Skipped on PostgreSQL — the column is created by create_all() above.
     if _is_sqlite:
         with engine.connect() as conn:
-            existing = {
+            existing_treasury = {
                 row[1]
                 for row in conn.execute(text("PRAGMA table_info(treasury_state)"))
             }
-            if "bounty_pool_fees_usdc" not in existing:
+            if "bounty_pool_fees_usdc" not in existing_treasury:
                 conn.execute(
                     text("ALTER TABLE treasury_state ADD COLUMN bounty_pool_fees_usdc REAL NOT NULL DEFAULT 0.0")
                 )
                 conn.commit()
                 logger.info("Migrated treasury_state: added bounty_pool_fees_usdc column")
+
+            existing_claims = {
+                row[1]
+                for row in conn.execute(text("PRAGMA table_info(negotiation_claims)"))
+            }
+            for col, ddl in [
+                ("evaluation_reason", "TEXT"),
+                ("evaluated_at",      "INTEGER"),
+            ]:
+                if col not in existing_claims:
+                    conn.execute(text(f"ALTER TABLE negotiation_claims ADD COLUMN {col} {ddl}"))
+                    conn.commit()
+                    logger.info("Migrated negotiation_claims: added %s column", col)
 
     with SessionLocal() as db:
         treasury = db.get(TreasuryState, 1)

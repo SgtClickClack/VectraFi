@@ -23,8 +23,8 @@ from web3_bridge import bridge as _w3_bridge
 logger = logging.getLogger("vectrafi.settlement")
 router = APIRouter(prefix="/api/v1/settlement", tags=["settlement"])
 
-# Exact 1.5% using integer-ratio representation — no floating-point representation error.
-_TAX_NUMERATOR   = Decimal("15")
+# Exact 0.1% using integer-ratio representation — no floating-point representation error.
+_TAX_NUMERATOR   = Decimal("1")
 _TAX_DENOMINATOR = Decimal("1000")
 _QUANTIZE_8      = Decimal("0.00000001")
 
@@ -86,7 +86,7 @@ def _execute_transfer(
 ) -> SettlementTransaction:
     """
     Core transfer primitive — called inside an open SQLAlchemy session.
-    Deducts full amount from sender, skims 1.5% tax to treasury, credits
+    Deducts full amount from sender, skims 0.1% tax to treasury, credits
     net to receiver. Raises HTTP 400 on insufficient sender balance.
     All mutations are flushed but NOT committed here — caller owns the commit.
 
@@ -177,11 +177,11 @@ async def settlement_transfer(
     db: Session = Depends(get_db),
 ) -> SettlementTransferResponse:
     """
-    Execute a signature-verified peer-to-peer USDC transfer with 1.5% micro-tax.
+    Execute a signature-verified peer-to-peer USDC transfer with 0.1% micro-tax.
 
     Auth: X-VectraFi-Signature required (EIP-191 signature over compact JSON body).
           Payload must include nonce, issued_at, and chain_id for replay protection.
-    Tax:  1.5% of gross_amount deducted and routed to treasury.accumulated_fees_usdc.
+    Tax:  0.1% of gross_amount deducted and routed to treasury.accumulated_fees_usdc.
     Atomicity: SQLAlchemy session rolls back on any error before commit.
     """
     payload = await verify_signed_payload(request, db, SettlementTransferRequest)
@@ -251,7 +251,7 @@ async def claim_bounty(
 
     The claimant holds the gross bounty in their wallet. This endpoint:
       1. Computes the counterpart's gross share: bounty_amount * counterpart_share_pct.
-      2. Executes a signed transfer claimant -> counterpart (1.5% tax deducted).
+      2. Executes a signed transfer claimant -> counterpart (0.1% tax deducted).
       3. The claimant retains the remainder in their wallet untouched.
 
     Auth: X-VectraFi-Signature required (with nonce/issued_at/chain_id).
@@ -312,7 +312,7 @@ def settlement_analytics(db: Session = Depends(get_db)) -> TreasuryAnalyticsResp
     Public read-only endpoint: returns aggregate settlement statistics.
 
     No auth required. Queries:
-    - treasury.accumulated_fees_usdc (1.5% micro-tax accumulator)
+    - treasury.accumulated_fees_usdc (0.1% micro-tax accumulator)
     - COUNT(*) of all settlement_transactions rows
     - SUM(gross_amount_usdc) across all settlement_transactions
     - COUNT(*) of registered agent_wallets
