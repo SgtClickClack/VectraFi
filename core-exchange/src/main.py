@@ -8,10 +8,6 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-
-_TEMPLATES_DIR   = Path(__file__).resolve().parent / "templates"
-_WELL_KNOWN_DIR  = Path(__file__).resolve().parent / ".well-known"
-
 from database import init_db
 from routes.analytics import record_latency
 from routes.analytics import router as analytics_router
@@ -24,6 +20,9 @@ from routes.swarm_control import router as swarm_control_router
 from routes.trade import router as trade_router
 from routes.wallet import router as wallet_router
 from services.web3_provider import is_live_mode
+
+_TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
+_WELL_KNOWN_DIR = Path(__file__).resolve().parent / ".well-known"
 
 
 def configure_logging() -> None:
@@ -89,7 +88,9 @@ else:
         "http://127.0.0.1:8000",
     ]
     _env_origins = [o.strip() for o in _raw_allowed.split(",") if o.strip()]
-    _origins = list(dict.fromkeys(_DEFAULT_ORIGINS + _env_origins))  # dedupe, preserve order
+    _origins = list(
+        dict.fromkeys(_DEFAULT_ORIGINS + _env_origins)
+    )  # dedupe, preserve order
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_origins,
@@ -112,7 +113,9 @@ app.include_router(protocol_router)
 # Mounted after all API routers so the static path cannot shadow any endpoint.
 # StaticFiles resolves relative to the directory where uvicorn starts (core-exchange/src/).
 if _WELL_KNOWN_DIR.is_dir():
-    app.mount("/.well-known", StaticFiles(directory=str(_WELL_KNOWN_DIR)), name="well-known")
+    app.mount(
+        "/.well-known", StaticFiles(directory=str(_WELL_KNOWN_DIR)), name="well-known"
+    )
 
 
 @app.middleware("http")
@@ -139,7 +142,8 @@ def on_startup() -> None:
     logger.info(
         "VectraFi core exchange started — mode=%s CORS=%s "
         "OpenAPI: /openapi.json  Swagger UI: /docs",
-        mode, cors_mode,
+        mode,
+        cors_mode,
     )
 
 

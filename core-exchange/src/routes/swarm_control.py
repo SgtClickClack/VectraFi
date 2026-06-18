@@ -33,6 +33,7 @@ _proc_start_time: Optional[float] = None
 
 # ── Request / response schemas ─────────────────────────────────────────────
 
+
 class SwarmStartRequest(BaseModel):
     dry_run: bool = False
 
@@ -57,14 +58,18 @@ class SwarmStatusResponse(BaseModel):
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
+
 def _is_alive() -> bool:
     return _proc is not None and _proc.returncode is None
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────
 
+
 @router.post("/start", response_model=SwarmStartResponse, status_code=200)
-async def start_swarm(body: SwarmStartRequest = SwarmStartRequest()) -> SwarmStartResponse:
+async def start_swarm(
+    body: SwarmStartRequest = SwarmStartRequest(),
+) -> SwarmStartResponse:
     global _proc, _proc_dry_run, _proc_start_time
 
     if _is_alive():
@@ -74,6 +79,7 @@ async def start_swarm(body: SwarmStartRequest = SwarmStartRequest()) -> SwarmSta
         )
 
     import os
+
     env = os.environ.copy()
     env["SWARM_DRY_RUN"] = "1" if body.dry_run else "0"
 
@@ -100,7 +106,9 @@ async def stop_swarm() -> SwarmStopResponse:
     global _proc, _proc_dry_run, _proc_start_time
 
     if not _is_alive():
-        raise HTTPException(status_code=404, detail="No swarm process is currently running.")
+        raise HTTPException(
+            status_code=404, detail="No swarm process is currently running."
+        )
 
     pid = _proc.pid
     try:
@@ -108,7 +116,9 @@ async def stop_swarm() -> SwarmStopResponse:
         try:
             await asyncio.wait_for(_proc.wait(), timeout=5.0)
         except asyncio.TimeoutError:
-            logger.warning("Swarm PID=%d did not exit after SIGTERM — sending SIGKILL", pid)
+            logger.warning(
+                "Swarm PID=%d did not exit after SIGTERM — sending SIGKILL", pid
+            )
             _proc.kill()
             await _proc.wait()
     except Exception as exc:

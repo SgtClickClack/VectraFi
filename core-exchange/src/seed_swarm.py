@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402
 """
 VectraFi Seed Swarm — autonomous multi-agent stress daemon.
 
@@ -56,7 +57,11 @@ from services.route_evaluator import (
     select_equalization_donor,
     tax_covers_overhead,
 )
-from services.web3_provider import get_on_chain_eth_balance, init_web3_provider, is_live_mode
+from services.web3_provider import (
+    get_on_chain_eth_balance,
+    init_web3_provider,
+    is_live_mode,
+)
 
 # ---------------------------------------------------------------------------
 # HD Wallet derivation (BIP-44, coin type 60 — Ethereum)
@@ -66,7 +71,7 @@ _SWARM_SEED_PHRASE: str | None = os.getenv("SWARM_SEED_PHRASE") or None
 # Standard BIP-44 Ethereum paths, one per desk.
 _DESK_HD_PATHS: dict[str, str] = {
     "Alpha": "m/44'/60'/0'/0/0",
-    "Beta":  "m/44'/60'/0'/0/1",
+    "Beta": "m/44'/60'/0'/0/1",
     "Gamma": "m/44'/60'/0'/0/2",
 }
 
@@ -77,32 +82,32 @@ if _SWARM_SEED_PHRASE:
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-_API_BASE    = (
+_API_BASE = (
     os.getenv("SWARM_API_BASE")
     or os.getenv("VECTRAFI_API_URL")
     or "http://127.0.0.1:8000"
 ).rstrip("/")
-_DRY_RUN     = os.getenv("SWARM_DRY_RUN", "0") == "1"
-_POLL_MS     = int(os.getenv("SWARM_POLL_MS", "1000"))
-_JITTER_MIN  = 0.050   # 50 ms
-_JITTER_MAX  = 0.200   # 200 ms
+_DRY_RUN = os.getenv("SWARM_DRY_RUN", "0") == "1"
+_POLL_MS = int(os.getenv("SWARM_POLL_MS", "1000"))
+_JITTER_MIN = 0.050  # 50 ms
+_JITTER_MAX = 0.200  # 200 ms
 _HTTP_TIMEOUT = httpx.Timeout(connect=5.0, read=15.0, write=5.0, pool=5.0)
 
 # Safety floor: trigger rebalance when any desk balance drops below this.
-_SAFETY_FLOOR_PCT  = 0.005
-_TRANSFER_AMOUNT   = 10.0   # USDC per hop — small enough to sustain long runs
-_REBALANCE_VOLUME  = 50.0
+_SAFETY_FLOOR_PCT = 0.005
+_TRANSFER_AMOUNT = 10.0  # USDC per hop — small enough to sustain long runs
+_REBALANCE_VOLUME = 50.0
 
 # ---------------------------------------------------------------------------
 # Circuit-breaker thresholds (env-overridable)
 # ---------------------------------------------------------------------------
 # Maximum consecutive transfer errors for a single desk before emergency halt.
-_CB_MAX_CONSECUTIVE_ERRORS: int   = int(os.getenv("SWARM_CB_MAX_ERRORS",       "5"))
+_CB_MAX_CONSECUTIVE_ERRORS: int = int(os.getenv("SWARM_CB_MAX_ERRORS", "5"))
 # Halt if any desk's balance falls below this fraction of its initial capital.
-_CB_MIN_BALANCE_PCT:        float = float(os.getenv("SWARM_CB_MIN_BALANCE_PCT", "0.80"))
+_CB_MIN_BALANCE_PCT: float = float(os.getenv("SWARM_CB_MIN_BALANCE_PCT", "0.80"))
 # Minimum ETH gas balance per desk wallet before live transfers are allowed to fire.
 # ~0.002 ETH ≈ 300k gas units on Base Sepolia; env-overridable via SWARM_CB_MIN_GAS_ETH.
-_CB_MIN_GAS_ETH:            float = float(os.getenv("SWARM_CB_MIN_GAS_ETH",    "0.002"))
+_CB_MIN_GAS_ETH: float = float(os.getenv("SWARM_CB_MIN_GAS_ETH", "0.002"))
 
 # ---------------------------------------------------------------------------
 # Autonomous desk equalization thresholds (env-overridable)
@@ -114,9 +119,13 @@ _CB_MIN_GAS_ETH:            float = float(os.getenv("SWARM_CB_MIN_GAS_ETH",    "
 # itself, AND must have a cached ETH balance of at least
 # _CB_MIN_GAS_ETH * _EQ_GAS_SAFETY_MULT so the equalization transfer itself
 # cannot drain the donor's gas cushion below the circuit-breaker floor.
-_EQ_STALL_THRESHOLD_USDC: float = float(os.getenv("SWARM_EQ_STALL_USDC", str(_TRANSFER_AMOUNT * 3)))
-_EQ_TARGET_USDC:          float = float(os.getenv("SWARM_EQ_TARGET_USDC", str(_TRANSFER_AMOUNT * 10)))
-_EQ_GAS_SAFETY_MULT:      float = float(os.getenv("SWARM_EQ_GAS_MULT",    "2.0"))
+_EQ_STALL_THRESHOLD_USDC: float = float(
+    os.getenv("SWARM_EQ_STALL_USDC", str(_TRANSFER_AMOUNT * 3))
+)
+_EQ_TARGET_USDC: float = float(
+    os.getenv("SWARM_EQ_TARGET_USDC", str(_TRANSFER_AMOUNT * 10))
+)
+_EQ_GAS_SAFETY_MULT: float = float(os.getenv("SWARM_EQ_GAS_MULT", "2.0"))
 
 # Agent identities — fixed prefix so re-runs reuse existing wallets (409 = ok).
 _DESK_NAMES = ("Alpha", "Beta", "Gamma")
@@ -124,7 +133,7 @@ _DESK_NAMES = ("Alpha", "Beta", "Gamma")
 # ---------------------------------------------------------------------------
 # Log setup — file + stdout
 # ---------------------------------------------------------------------------
-_LOG_DIR  = _THIS_DIR.parent.parent / "logs"
+_LOG_DIR = _THIS_DIR.parent.parent / "logs"
 _LOG_DIR.mkdir(parents=True, exist_ok=True)
 _LOG_FILE = _LOG_DIR / "swarm_activity.log"
 
@@ -147,40 +156,45 @@ log = logging.getLogger("swarm")
 # Data classes
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class DeskState:
-    name:                str
-    agent_id:            str
-    wallet_address:      str
-    private_key:         str
-    balance_usdc:        float
+    name: str
+    agent_id: str
+    wallet_address: str
+    private_key: str
+    balance_usdc: float
     initial_balance_usdc: float = 0.0  # set at provision; used by min-balance guard
-    transfers_ok:        int = 0
-    transfers_err:       int = 0
-    consecutive_errors:  int = 0       # reset on success; circuit-breaker trips at threshold
-    eth_balance:         float = 0.0   # cached by _check_gas_guard; used by equalization donor vetting
+    transfers_ok: int = 0
+    transfers_err: int = 0
+    consecutive_errors: int = 0  # reset on success; circuit-breaker trips at threshold
+    eth_balance: float = (
+        0.0  # cached by _check_gas_guard; used by equalization donor vetting
+    )
 
 
 @dataclass
 class SwarmStats:
-    iterations:          int = 0
-    route_checks:        int = 0
-    route_checks_local:  int = 0   # short-circuited by local pre-check (no HTTP call)
-    viable_routes:       int = 0
-    transfers_fired:     int = 0
-    transfers_ok:        int = 0
-    transfers_err:       int = 0
-    rebalances_fired:    int = 0
-    equalization_count:  int = 0
+    iterations: int = 0
+    route_checks: int = 0
+    route_checks_local: int = 0  # short-circuited by local pre-check (no HTTP call)
+    viable_routes: int = 0
+    transfers_fired: int = 0
+    transfers_ok: int = 0
+    transfers_err: int = 0
+    rebalances_fired: int = 0
+    equalization_count: int = 0
     equalization_volume: float = 0.0
-    start_time:          float = field(default_factory=time.perf_counter)
+    start_time: float = field(default_factory=time.perf_counter)
 
     def elapsed_s(self) -> float:
         return time.perf_counter() - self.start_time
 
     def summary(self) -> str:
         saved_pct = (
-            100.0 * self.route_checks_local / max(1, self.route_checks + self.route_checks_local)
+            100.0
+            * self.route_checks_local
+            / max(1, self.route_checks + self.route_checks_local)
         )
         return (
             f"iter={self.iterations}  "
@@ -197,10 +211,11 @@ class SwarmStats:
 # Signing helper (identical contract to run_testnet_stress.py)
 # ---------------------------------------------------------------------------
 
+
 def _signed_body(body: dict, private_key: str) -> tuple[bytes, str]:
     compact = json.dumps(body, separators=(",", ":"))
-    msg     = encode_defunct(text=compact)
-    sig     = Account.sign_message(msg, private_key=private_key)
+    msg = encode_defunct(text=compact)
+    sig = Account.sign_message(msg, private_key=private_key)
     return compact.encode("utf-8"), sig.signature.hex()
 
 
@@ -208,14 +223,15 @@ def _signed_body(body: dict, private_key: str) -> tuple[bytes, str]:
 # Wallet provisioning
 # ---------------------------------------------------------------------------
 
+
 async def _provision_desk(
-    client:          httpx.AsyncClient,
-    name:            str,
-    swarm_id:        str,
+    client: httpx.AsyncClient,
+    name: str,
+    swarm_id: str,
     derived_address: str | None = None,
-    derived_key:     str | None = None,
+    derived_key: str | None = None,
 ) -> DeskState | None:
-    agent_id   = f"swarm_{name}_{swarm_id}"
+    agent_id = f"swarm_{name}_{swarm_id}"
     create_body: dict = {"agent_id": agent_id}
     if derived_address is not None:
         create_body["wallet_address"] = derived_address
@@ -230,14 +246,19 @@ async def _provision_desk(
         return None
 
     if resp.status_code in (200, 201):
-        d           = resp.json()
+        d = resp.json()
         # Use derived values when available; fall back to what the server generated.
-        wallet_addr = derived_address if derived_address is not None else d["wallet_address"]
-        private_key = derived_key     if derived_key     is not None else d["private_key"]
+        wallet_addr = (
+            derived_address if derived_address is not None else d["wallet_address"]
+        )
+        private_key = derived_key if derived_key is not None else d["private_key"]
         initial_bal = float(d["balance_usdc"])
         log.info(
             "PROVISION  %-12s  agent_id=%-34s  address=%s  balance=%.2f USDC%s",
-            name, agent_id, wallet_addr, initial_bal,
+            name,
+            agent_id,
+            wallet_addr,
+            initial_bal,
             "  [HD]" if derived_key is not None else "",
         )
         return DeskState(
@@ -255,7 +276,8 @@ async def _provision_desk(
             # response updates it; set to DEFAULT so the swarm loop can start.
             log.info(
                 "PROVISION  %-12s  409 (HD reuse) — reconstructing from derived key  address=%s",
-                name, derived_address,
+                name,
+                derived_address,
             )
             return DeskState(
                 name=name,
@@ -265,10 +287,14 @@ async def _provision_desk(
                 balance_usdc=DEFAULT_USDC_BALANCE,
                 initial_balance_usdc=DEFAULT_USDC_BALANCE,
             )
-        log.warning("PROVISION  %-12s  409 already exists — cannot retrieve key, skipping", name)
+        log.warning(
+            "PROVISION  %-12s  409 already exists — cannot retrieve key, skipping", name
+        )
         return None
     else:
-        log.error("PROVISION  %-12s  HTTP %d: %s", name, resp.status_code, resp.text[:120])
+        log.error(
+            "PROVISION  %-12s  HTTP %d: %s", name, resp.status_code, resp.text[:120]
+        )
         return None
 
 
@@ -276,15 +302,17 @@ async def provision_desks(client: httpx.AsyncClient, swarm_id: str) -> list[Desk
     tasks: list = []
     for name in _DESK_NAMES:
         derived_address: str | None = None
-        derived_key:     str | None = None
+        derived_key: str | None = None
         if _SWARM_SEED_PHRASE:
-            acct            = Account.from_mnemonic(
+            acct = Account.from_mnemonic(
                 _SWARM_SEED_PHRASE, account_path=_DESK_HD_PATHS[name]
             )
             derived_address = acct.address
-            raw_key         = acct.key.hex()
-            derived_key     = raw_key if raw_key.startswith("0x") else f"0x{raw_key}"
-        tasks.append(_provision_desk(client, name, swarm_id, derived_address, derived_key))
+            raw_key = acct.key.hex()
+            derived_key = raw_key if raw_key.startswith("0x") else f"0x{raw_key}"
+        tasks.append(
+            _provision_desk(client, name, swarm_id, derived_address, derived_key)
+        )
 
     results = await asyncio.gather(*tasks, return_exceptions=True)
     desks: list[DeskState] = []
@@ -300,10 +328,11 @@ async def provision_desks(client: httpx.AsyncClient, swarm_id: str) -> list[Desk
 # Arbitrage route-path check
 # ---------------------------------------------------------------------------
 
+
 async def check_route(
     client: httpx.AsyncClient,
-    desks:  list[DeskState],
-    stats:  SwarmStats,
+    desks: list[DeskState],
+    stats: SwarmStats,
 ) -> bool:
     """
     Two-stage route viability check (Cognitive Token Cost Throttling).
@@ -334,11 +363,11 @@ async def check_route(
 
     # Stage 2: authoritative HTTP check — only reached when local state is plausible.
     chain = [d.agent_id for d in desks]
-    body  = {
-        "entry_asset":           "USDC",
-        "exit_asset":            "USDC",
-        "volume_usdc":           _TRANSFER_AMOUNT,
-        "agent_chain":           chain,
+    body = {
+        "entry_asset": "USDC",
+        "exit_asset": "USDC",
+        "volume_usdc": _TRANSFER_AMOUNT,
+        "agent_chain": chain,
         "slippage_tolerance_pct": _SAFETY_FLOOR_PCT,
     }
     stats.route_checks += 1
@@ -350,7 +379,7 @@ async def check_route(
         if resp.status_code != 200:
             log.warning("ROUTE-CHECK  HTTP %d: %s", resp.status_code, resp.text[:80])
             return False
-        data   = resp.json()
+        data = resp.json()
         viable = data.get("viable", False)
         if viable:
             stats.viable_routes += 1
@@ -373,11 +402,12 @@ async def check_route(
 # Signed settlement transfer (with async jitter)
 # ---------------------------------------------------------------------------
 
+
 async def fire_transfer(
-    client:          httpx.AsyncClient,
-    sender:          DeskState,
-    receiver:        DeskState,
-    stats:           SwarmStats,
+    client: httpx.AsyncClient,
+    sender: DeskState,
+    receiver: DeskState,
+    stats: SwarmStats,
     amount_override: float | None = None,
 ) -> None:
     """Execute one signed settlement transfer.
@@ -386,22 +416,24 @@ async def fire_transfer(
     amount and skip organic jitter — the transfer is deliberate, not simulated
     trading activity.  When None, uses _TRANSFER_AMOUNT with jitter (normal hop).
     """
-    transfer_amount = amount_override if amount_override is not None else _TRANSFER_AMOUNT
-    tx_type         = "swarm_equalization" if amount_override is not None else "swarm_transfer"
+    transfer_amount = (
+        amount_override if amount_override is not None else _TRANSFER_AMOUNT
+    )
+    tx_type = "swarm_equalization" if amount_override is not None else "swarm_transfer"
 
     # Skip jitter for equalization transfers; add it for organic trading hops.
     if amount_override is None:
         await asyncio.sleep(random.uniform(_JITTER_MIN, _JITTER_MAX))
 
     body = {
-        "agent_id":       sender.agent_id,
+        "agent_id": sender.agent_id,
         "wallet_address": sender.wallet_address,
-        "receiver_id":    receiver.agent_id,
-        "amount_usdc":    transfer_amount,
-        "tx_type":        tx_type,
-        "nonce":          str(uuid.uuid4()),
-        "issued_at":      int(time.time()),
-        "chain_id":       PROTOCOL_DOMAIN,
+        "receiver_id": receiver.agent_id,
+        "amount_usdc": transfer_amount,
+        "tx_type": tx_type,
+        "nonce": str(uuid.uuid4()),
+        "issued_at": int(time.time()),
+        "chain_id": PROTOCOL_DOMAIN,
     }
     raw_body, sig_hex = _signed_body(body, sender.private_key)
 
@@ -412,7 +444,7 @@ async def fire_transfer(
             f"{_API_BASE}/api/v1/settlement/transfer",
             content=raw_body,
             headers={
-                "Content-Type":         "application/json",
+                "Content-Type": "application/json",
                 "X-VectraFi-Signature": sig_hex,
             },
         )
@@ -420,43 +452,62 @@ async def fire_transfer(
 
         if resp.status_code == 200:
             d = resp.json()
-            sender.balance_usdc   = d.get("sender_balance_usdc",   sender.balance_usdc)
-            receiver.balance_usdc = d.get("receiver_balance_usdc", receiver.balance_usdc)
-            stats.transfers_ok       += 1
-            sender.transfers_ok      += 1
-            sender.consecutive_errors = 0   # clear streak on success
+            sender.balance_usdc = d.get("sender_balance_usdc", sender.balance_usdc)
+            receiver.balance_usdc = d.get(
+                "receiver_balance_usdc", receiver.balance_usdc
+            )
+            stats.transfers_ok += 1
+            sender.transfers_ok += 1
+            sender.consecutive_errors = 0  # clear streak on success
             log.info(
                 "TRANSFER  %-7s → %-7s  $%5.2f  %5.0fms  OK  [%s]  "
                 "sender_bal=%.2f  receiver_bal=%.2f",
-                sender.name, receiver.name, transfer_amount, elapsed_ms, tx_type,
-                sender.balance_usdc, receiver.balance_usdc,
+                sender.name,
+                receiver.name,
+                transfer_amount,
+                elapsed_ms,
+                tx_type,
+                sender.balance_usdc,
+                receiver.balance_usdc,
             )
         else:
-            stats.transfers_err       += 1
-            sender.transfers_err      += 1
+            stats.transfers_err += 1
+            sender.transfers_err += 1
             sender.consecutive_errors += 1
             log.warning(
                 "TRANSFER  %-7s → %-7s  $%5.2f  %5.0fms  ERR  [%s]  HTTP %d: %s  "
                 "(consecutive_errors=%d)",
-                sender.name, receiver.name, transfer_amount, elapsed_ms, tx_type,
-                resp.status_code, resp.text[:100], sender.consecutive_errors,
+                sender.name,
+                receiver.name,
+                transfer_amount,
+                elapsed_ms,
+                tx_type,
+                resp.status_code,
+                resp.text[:100],
+                sender.consecutive_errors,
             )
 
     except httpx.TimeoutException as exc:
-        stats.transfers_err       += 1
-        sender.transfers_err      += 1
+        stats.transfers_err += 1
+        sender.transfers_err += 1
         sender.consecutive_errors += 1
         log.warning(
             "TRANSFER  %-7s → %-7s  RPC_TIMEOUT: %s  (consecutive_errors=%d)",
-            sender.name, receiver.name, exc, sender.consecutive_errors,
+            sender.name,
+            receiver.name,
+            exc,
+            sender.consecutive_errors,
         )
     except Exception as exc:
-        stats.transfers_err       += 1
-        sender.transfers_err      += 1
+        stats.transfers_err += 1
+        sender.transfers_err += 1
         sender.consecutive_errors += 1
         log.error(
             "TRANSFER  %-7s → %-7s  UNEXPECTED: %s  (consecutive_errors=%d)",
-            sender.name, receiver.name, exc, sender.consecutive_errors,
+            sender.name,
+            receiver.name,
+            exc,
+            sender.consecutive_errors,
         )
 
 
@@ -464,14 +515,15 @@ async def fire_transfer(
 # Rebalance trigger
 # ---------------------------------------------------------------------------
 
+
 async def maybe_rebalance(
     client: httpx.AsyncClient,
-    desk:   DeskState,
-    stats:  SwarmStats,
+    desk: DeskState,
+    stats: SwarmStats,
 ) -> None:
     body = {
-        "target_agent_id":       desk.agent_id,
-        "volume_usdc":           _REBALANCE_VOLUME,
+        "target_agent_id": desk.agent_id,
+        "volume_usdc": _REBALANCE_VOLUME,
         "slippage_tolerance_pct": _SAFETY_FLOOR_PCT,
     }
     stats.rebalances_fired += 1
@@ -483,12 +535,21 @@ async def maybe_rebalance(
                 desk.balance_usdc = d.get("post_balance_usdc", desk.balance_usdc)
                 log.info(
                     "REBALANCE  %-7s  post_balance=%.2f  hops=%d",
-                    desk.name, desk.balance_usdc, len(d.get("transactions", [])),
+                    desk.name,
+                    desk.balance_usdc,
+                    len(d.get("transactions", [])),
                 )
             else:
-                log.debug("REBALANCE  %-7s  skipped: %s", desk.name, d.get("rejection_reason"))
+                log.debug(
+                    "REBALANCE  %-7s  skipped: %s", desk.name, d.get("rejection_reason")
+                )
         else:
-            log.warning("REBALANCE  %-7s  HTTP %d: %s", desk.name, resp.status_code, resp.text[:80])
+            log.warning(
+                "REBALANCE  %-7s  HTTP %d: %s",
+                desk.name,
+                resp.status_code,
+                resp.text[:80],
+            )
     except httpx.TimeoutException as exc:
         log.warning("REBALANCE  %-7s  RPC_TIMEOUT: %s", desk.name, exc)
     except Exception as exc:
@@ -499,10 +560,11 @@ async def maybe_rebalance(
 # Autonomous desk equalization
 # ---------------------------------------------------------------------------
 
+
 async def _equalize_stalled_desks(
     client: httpx.AsyncClient,
-    desks:  list[DeskState],
-    stats:  SwarmStats,
+    desks: list[DeskState],
+    stats: SwarmStats,
 ) -> None:
     """
     Pre-iteration capital equalization pass — fully programmatic (no HTTP reads).
@@ -522,7 +584,7 @@ async def _equalize_stalled_desks(
     separately from organic swarm_transfer activity.
     """
     gas_floor = _CB_MIN_GAS_ETH * _EQ_GAS_SAFETY_MULT
-    live      = is_live_mode() and not _DRY_RUN
+    live = is_live_mode() and not _DRY_RUN
 
     for desk in desks:
         top_up = compute_top_up(
@@ -537,7 +599,8 @@ async def _equalize_stalled_desks(
         if not tax_covers_overhead(top_up, estimated_overhead_usdc=0.001):
             log.debug(
                 "EQUALIZE  %-7s  top_up=%.4f USDC too small — tax < overhead, deferring",
-                desk.name, top_up,
+                desk.name,
+                top_up,
             )
             continue
 
@@ -549,7 +612,8 @@ async def _equalize_stalled_desks(
             log.warning(
                 "EQUALIZE  %-7s  stalled at %.2f USDC — no eligible donor "
                 "(need donor_usdc > %.2f and%s eth_balance >= %.6f ETH)",
-                desk.name, desk.balance_usdc,
+                desk.name,
+                desk.balance_usdc,
                 _EQ_TARGET_USDC + top_up,
                 "" if live else " [gas check bypassed in sandbox]",
                 gas_floor,
@@ -559,11 +623,16 @@ async def _equalize_stalled_desks(
         log.info(
             "EQUALIZE  %-7s  balance=%.2f < threshold=%.2f — "
             "requesting %.2f USDC top-up from %-7s (donor_bal=%.2f  donor_eth=%.6f)",
-            desk.name, desk.balance_usdc, _EQ_STALL_THRESHOLD_USDC,
-            top_up, donor.name, donor.balance_usdc, donor.eth_balance,
+            desk.name,
+            desk.balance_usdc,
+            _EQ_STALL_THRESHOLD_USDC,
+            top_up,
+            donor.name,
+            donor.balance_usdc,
+            donor.eth_balance,
         )
         await fire_transfer(client, donor, desk, stats, amount_override=top_up)
-        stats.equalization_count  += 1
+        stats.equalization_count += 1
         stats.equalization_volume += top_up
 
 
@@ -574,6 +643,7 @@ async def _equalize_stalled_desks(
 # ---------------------------------------------------------------------------
 # Circuit breakers
 # ---------------------------------------------------------------------------
+
 
 class CircuitBreakerTripped(Exception):
     """Raised when a safety guard threshold is breached; causes sys.exit(1)."""
@@ -590,7 +660,9 @@ def _check_circuit_breakers(desks: list[DeskState]) -> None:
             log.critical(
                 "CIRCUIT-BREAKER  MAX-ERRORS  %-7s  "
                 "consecutive_errors=%d >= threshold=%d — EMERGENCY SHUTDOWN",
-                desk.name, desk.consecutive_errors, _CB_MAX_CONSECUTIVE_ERRORS,
+                desk.name,
+                desk.consecutive_errors,
+                _CB_MAX_CONSECUTIVE_ERRORS,
             )
             raise CircuitBreakerTripped(
                 f"desk {desk.name} hit {desk.consecutive_errors} consecutive errors"
@@ -603,8 +675,11 @@ def _check_circuit_breakers(desks: list[DeskState]) -> None:
                 log.critical(
                     "CIRCUIT-BREAKER  MIN-BALANCE  %-7s  "
                     "balance=%.4f USDC < floor=%.4f (%.0f%% of initial %.4f) — EMERGENCY SHUTDOWN",
-                    desk.name, desk.balance_usdc, floor,
-                    _CB_MIN_BALANCE_PCT * 100, desk.initial_balance_usdc,
+                    desk.name,
+                    desk.balance_usdc,
+                    floor,
+                    _CB_MIN_BALANCE_PCT * 100,
+                    desk.initial_balance_usdc,
                 )
                 raise CircuitBreakerTripped(
                     f"desk {desk.name} balance {desk.balance_usdc:.4f} USDC "
@@ -633,14 +708,18 @@ async def _check_gas_guard(desks: list[DeskState]) -> None:
 
         log.debug(
             "GAS-GUARD  %-7s  eth_balance=%.6f ETH  threshold=%.6f ETH",
-            desk.name, eth_bal, _CB_MIN_GAS_ETH,
+            desk.name,
+            eth_bal,
+            _CB_MIN_GAS_ETH,
         )
 
         if eth_bal < _CB_MIN_GAS_ETH:
             log.critical(
                 "CIRCUIT-BREAKER  MIN-GAS  %-7s  "
                 "eth_balance=%.6f ETH < threshold=%.6f ETH — EMERGENCY SHUTDOWN",
-                desk.name, eth_bal, _CB_MIN_GAS_ETH,
+                desk.name,
+                eth_bal,
+                _CB_MIN_GAS_ETH,
             )
             raise CircuitBreakerTripped(
                 f"desk {desk.name} ETH gas balance {eth_bal:.6f} ETH "
@@ -650,24 +729,24 @@ async def _check_gas_guard(desks: list[DeskState]) -> None:
 
 async def _post_heartbeat(
     client: httpx.AsyncClient,
-    desks:  list[DeskState],
-    stats:  SwarmStats,
+    desks: list[DeskState],
+    stats: SwarmStats,
 ) -> None:
     """Push swarm state to the dashboard's in-memory store (fire-and-forget)."""
     body = {
-        "iterations":               stats.iterations,
-        "route_checks":             stats.route_checks,
-        "viable_routes":            stats.viable_routes,
-        "dry_run":                  _DRY_RUN,
-        "equalization_count":       stats.equalization_count,
+        "iterations": stats.iterations,
+        "route_checks": stats.route_checks,
+        "viable_routes": stats.viable_routes,
+        "dry_run": _DRY_RUN,
+        "equalization_count": stats.equalization_count,
         "equalization_volume_usdc": stats.equalization_volume,
         "desks": [
             {
-                "name":          d.name,
-                "balance_usdc":  d.balance_usdc,
-                "transfers_ok":  d.transfers_ok,
+                "name": d.name,
+                "balance_usdc": d.balance_usdc,
+                "transfers_ok": d.transfers_ok,
                 "transfers_err": d.transfers_err,
-                "eth_balance":   d.eth_balance,
+                "eth_balance": d.eth_balance,
             }
             for d in desks
         ],
@@ -686,10 +765,13 @@ async def swarm_loop(desks: list[DeskState]) -> None:
     stats = SwarmStats()
     poll_s = _POLL_MS / 1000.0
 
-    log.info("SWARM  started  desks=%d  poll=%dms  dry_run=%s", len(desks), _POLL_MS, _DRY_RUN)
-    log.info("SWARM  agents: %s", "  |  ".join(
-        f"{d.name}={d.agent_id}" for d in desks
-    ))
+    log.info(
+        "SWARM  started  desks=%d  poll=%dms  dry_run=%s",
+        len(desks),
+        _POLL_MS,
+        _DRY_RUN,
+    )
+    log.info("SWARM  agents: %s", "  |  ".join(f"{d.name}={d.agent_id}" for d in desks))
 
     # Mandatory preflight gas check — must pass before the first transfer can fire.
     # Mirrors the in-loop guard so any RPC or unexpected error halts cleanly.
@@ -699,7 +781,8 @@ async def swarm_loop(desks: list[DeskState]) -> None:
         raise
     except Exception as exc:
         log.critical(
-            "GAS-GUARD  preflight unexpected error — treating as emergency halt: %s", exc
+            "GAS-GUARD  preflight unexpected error — treating as emergency halt: %s",
+            exc,
         )
         raise CircuitBreakerTripped(
             f"gas guard preflight raised unexpectedly: {exc}"
@@ -729,7 +812,8 @@ async def swarm_loop(desks: list[DeskState]) -> None:
                     else:
                         log.debug(
                             "TRANSFER  SKIP  %-7s  balance=%.2f below 2× transfer amount",
-                            sender.name, sender.balance_usdc,
+                            sender.name,
+                            sender.balance_usdc,
                         )
 
                 # 3. Rebalance any desk whose balance has fallen below floor
@@ -747,7 +831,10 @@ async def swarm_loop(desks: list[DeskState]) -> None:
                 for d in desks:
                     log.info(
                         "  DESK  %-7s  balance=%.4f USDC  ok=%d  err=%d  consec_err=%d",
-                        d.name, d.balance_usdc, d.transfers_ok, d.transfers_err,
+                        d.name,
+                        d.balance_usdc,
+                        d.transfers_ok,
+                        d.transfers_err,
                         d.consecutive_errors,
                     )
                 await _post_heartbeat(client, desks, stats)
@@ -757,7 +844,8 @@ async def swarm_loop(desks: list[DeskState]) -> None:
                     raise
                 except Exception as exc:
                     log.critical(
-                        "GAS-GUARD  unexpected error — treating as emergency halt: %s", exc
+                        "GAS-GUARD  unexpected error — treating as emergency halt: %s",
+                        exc,
                     )
                     raise CircuitBreakerTripped(
                         f"gas guard raised unexpectedly: {exc}"
@@ -770,7 +858,8 @@ async def swarm_loop(desks: list[DeskState]) -> None:
                 raise
             except Exception as exc:
                 log.critical(
-                    "CIRCUIT-BREAKER  unexpected error — treating as emergency halt: %s", exc
+                    "CIRCUIT-BREAKER  unexpected error — treating as emergency halt: %s",
+                    exc,
                 )
                 raise CircuitBreakerTripped(
                     f"circuit breaker check raised unexpectedly: {exc}"
@@ -786,6 +875,7 @@ async def swarm_loop(desks: list[DeskState]) -> None:
 # Entry point
 # ---------------------------------------------------------------------------
 
+
 async def main() -> None:
     # In HD mode, agent IDs must be stable across runs so the existing wallets
     # are reused (409 → reconstruct from derived key).  Random ID is fine for
@@ -799,8 +889,12 @@ async def main() -> None:
 
     if _SWARM_SEED_PHRASE:
         log.info("  HD wallet mode — deterministic BIP-44 keys from SWARM_SEED_PHRASE")
-        log.info("  Desk paths: Alpha=%s  Beta=%s  Gamma=%s",
-                 _DESK_HD_PATHS["Alpha"], _DESK_HD_PATHS["Beta"], _DESK_HD_PATHS["Gamma"])
+        log.info(
+            "  Desk paths: Alpha=%s  Beta=%s  Gamma=%s",
+            _DESK_HD_PATHS["Alpha"],
+            _DESK_HD_PATHS["Beta"],
+            _DESK_HD_PATHS["Gamma"],
+        )
     if _DRY_RUN:
         log.info("  DRY-RUN mode active — transfers will be skipped")
 
@@ -825,10 +919,16 @@ async def main() -> None:
         desks = await provision_desks(client, swarm_id)
 
     if len(desks) < 2:
-        log.error("  Need at least 2 active desks to run — provisioned only %d", len(desks))
+        log.error(
+            "  Need at least 2 active desks to run — provisioned only %d", len(desks)
+        )
         sys.exit(1)
 
-    log.info("  Provisioned %d/%d desks — entering swarm loop …", len(desks), len(_DESK_NAMES))
+    log.info(
+        "  Provisioned %d/%d desks — entering swarm loop …",
+        len(desks),
+        len(_DESK_NAMES),
+    )
 
     try:
         await swarm_loop(desks)

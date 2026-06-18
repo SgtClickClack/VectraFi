@@ -78,6 +78,7 @@ async def _probe_rpc(url: str) -> tuple[bool, str]:
 # Main verification runner
 # ---------------------------------------------------------------------------
 
+
 async def _run_verification() -> int:
     """Execute all checks and return an exit code (0 = pass, 1 = fail)."""
     print()
@@ -142,25 +143,41 @@ async def _run_verification() -> int:
         print(f"  Problem  : {reason}")
 
         if label == "L2_PROVIDER_URL":
-            print("  Fix      : Set L2_PROVIDER_URL to a valid HTTP(S) JSON-RPC endpoint.")
+            print(
+                "  Fix      : Set L2_PROVIDER_URL to a valid HTTP(S) JSON-RPC endpoint."
+            )
             print("             Examples:")
             print("               Base Testnet  - https://sepolia.base.org")
-            print("               Alchemy       - https://base-sepolia.g.alchemy.com/v2/<KEY>")
+            print(
+                "               Alchemy       - https://base-sepolia.g.alchemy.com/v2/<KEY>"
+            )
             print("             On Railway: Settings > Variables > add L2_PROVIDER_URL")
 
         elif label == "PROTOCOL_PRIVATE_KEY":
-            print("  Fix      : Set PROTOCOL_PRIVATE_KEY to the 64-char hex private key")
-            print("             of the platform gas/escrow account (with or without 0x prefix).")
+            print(
+                "  Fix      : Set PROTOCOL_PRIVATE_KEY to the 64-char hex private key"
+            )
+            print(
+                "             of the platform gas/escrow account (with or without 0x prefix)."
+            )
             print("             NEVER commit this value to source control.")
-            print("             On Railway: Settings > Variables > add PROTOCOL_PRIVATE_KEY")
+            print(
+                "             On Railway: Settings > Variables > add PROTOCOL_PRIVATE_KEY"
+            )
 
         elif label == "USDC_CONTRACT_ADDRESS":
-            print("  Fix      : Set USDC_CONTRACT_ADDRESS to the ERC-20 USDC contract on")
+            print(
+                "  Fix      : Set USDC_CONTRACT_ADDRESS to the ERC-20 USDC contract on"
+            )
             print("             your target L2 (0x + 40 hex chars, e.g. 0x036Cbd...).")
-            print("             Base Sepolia USDC: 0x036CbD53842c5426634e7929541eC2318f3dCF7e")
+            print(
+                "             Base Sepolia USDC: 0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+            )
 
         elif label == "PLATFORM_TREASURY_ADDRESS":
-            print("  Fix      : Set PLATFORM_TREASURY_ADDRESS to the wallet that receives")
+            print(
+                "  Fix      : Set PLATFORM_TREASURY_ADDRESS to the wallet that receives"
+            )
             print("             the 1.5% tax on every settlement (0x + 40 hex chars).")
 
     print()

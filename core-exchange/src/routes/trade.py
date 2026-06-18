@@ -70,7 +70,7 @@ async def execute_swap(request: Request, db: Session = Depends(get_db)) -> SwapR
     # mutations use Decimal to maintain per-wallet precision.
     if payload.from_token == "USDC":
         usdc_bal = Decimal(str(wallet.balance_usdc))
-        debit    = Decimal(str(payload.amount))
+        debit = Decimal(str(payload.amount))
         if usdc_bal < debit:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -79,10 +79,12 @@ async def execute_swap(request: Request, db: Session = Depends(get_db)) -> SwapR
         execution_price = prices["HBAR"] / prices["USDC"]
         amount_out = payload.amount / execution_price
         wallet.balance_usdc = usdc_bal - debit
-        wallet.balance_hbar = Decimal(str(wallet.balance_hbar)) + Decimal(str(amount_out))
+        wallet.balance_hbar = Decimal(str(wallet.balance_hbar)) + Decimal(
+            str(amount_out)
+        )
     else:
         hbar_bal = Decimal(str(wallet.balance_hbar))
-        debit    = Decimal(str(payload.amount))
+        debit = Decimal(str(payload.amount))
         if hbar_bal < debit:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -91,7 +93,9 @@ async def execute_swap(request: Request, db: Session = Depends(get_db)) -> SwapR
         execution_price = prices["HBAR"] / prices["USDC"]
         amount_out = payload.amount * execution_price
         wallet.balance_hbar = hbar_bal - debit
-        wallet.balance_usdc = Decimal(str(wallet.balance_usdc)) + Decimal(str(amount_out))
+        wallet.balance_usdc = Decimal(str(wallet.balance_usdc)) + Decimal(
+            str(amount_out)
+        )
 
     db.commit()
     db.refresh(wallet)

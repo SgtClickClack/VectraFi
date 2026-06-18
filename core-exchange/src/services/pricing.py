@@ -44,11 +44,21 @@ async def fetch_live_prices() -> MarketPricesResponse:
                 try:
                     prices[asset] = await _fetch_coinbase_spot(client, pair)
                     live_assets.append(asset)
-                except (httpx.TimeoutException, httpx.HTTPError, KeyError, ValueError, TypeError) as exc:
+                except (
+                    httpx.TimeoutException,
+                    httpx.HTTPError,
+                    KeyError,
+                    ValueError,
+                    TypeError,
+                ) as exc:
                     failed_assets.append(asset)
-                    logger.warning("Failed to fetch %s spot price — using fallback: %s", asset, exc)
+                    logger.warning(
+                        "Failed to fetch %s spot price — using fallback: %s", asset, exc
+                    )
     except httpx.TimeoutException as exc:
-        logger.warning("Market price request timed out — using full fallback set: %s", exc)
+        logger.warning(
+            "Market price request timed out — using full fallback set: %s", exc
+        )
         return _build_fallback_response()
 
     if live_assets:

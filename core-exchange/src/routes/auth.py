@@ -33,7 +33,9 @@ async def verify_signed_payload(request: Request, db: Session, model: type[T]) -
     body_text = body_bytes.decode("utf-8")
     signature = request.headers.get(SIGNATURE_HEADER)
     if not signature:
-        logger.warning("Rejected unsigned transaction — missing %s header", SIGNATURE_HEADER)
+        logger.warning(
+            "Rejected unsigned transaction — missing %s header", SIGNATURE_HEADER
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Missing required header: {SIGNATURE_HEADER}",

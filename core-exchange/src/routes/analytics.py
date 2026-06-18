@@ -67,6 +67,7 @@ def _avg_latency() -> float:
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _get_treasury(db: Session) -> TreasuryState:
     treasury = db.get(TreasuryState, 1)
     if treasury is None:
@@ -82,6 +83,7 @@ def _get_treasury(db: Session) -> TreasuryState:
 # GET /api/v1/analytics/stats
 # ---------------------------------------------------------------------------
 
+
 @router.get("/stats", response_model=AnalyticsStatsResponse)
 def analytics_stats(db: Session = Depends(get_db)) -> AnalyticsStatsResponse:
     """
@@ -89,10 +91,9 @@ def analytics_stats(db: Session = Depends(get_db)) -> AnalyticsStatsResponse:
     Safe on an empty database — all counts default to zero.
     """
     tx_count = db.query(func.count(SettlementTransaction.tx_id)).scalar() or 0
-    total_volume = (
-        db.query(func.sum(SettlementTransaction.gross_amount_usdc)).scalar()
-        or Decimal("0")
-    )
+    total_volume = db.query(
+        func.sum(SettlementTransaction.gross_amount_usdc)
+    ).scalar() or Decimal("0")
     wallet_count = db.query(func.count(AgentWallet.agent_id)).scalar() or 0
 
     return AnalyticsStatsResponse(
@@ -109,6 +110,7 @@ def analytics_stats(db: Session = Depends(get_db)) -> AnalyticsStatsResponse:
 # GET /api/v1/analytics/treasury
 # ---------------------------------------------------------------------------
 
+
 @router.get("/treasury", response_model=AnalyticsTreasuryResponse)
 def analytics_treasury(db: Session = Depends(get_db)) -> AnalyticsTreasuryResponse:
     """
@@ -116,10 +118,9 @@ def analytics_treasury(db: Session = Depends(get_db)) -> AnalyticsTreasuryRespon
     Mirrors /api/v1/settlement/analytics but in the shape the dashboard expects.
     """
     treasury = _get_treasury(db)
-    total_volume = (
-        db.query(func.sum(SettlementTransaction.gross_amount_usdc)).scalar()
-        or Decimal("0")
-    )
+    total_volume = db.query(
+        func.sum(SettlementTransaction.gross_amount_usdc)
+    ).scalar() or Decimal("0")
     return AnalyticsTreasuryResponse(
         accumulated_fees_usdc=float(treasury.accumulated_fees_usdc),
         total_volume_processed_usdc=float(total_volume),
@@ -129,6 +130,7 @@ def analytics_treasury(db: Session = Depends(get_db)) -> AnalyticsTreasuryRespon
 # ---------------------------------------------------------------------------
 # GET /api/v1/analytics/recent-transactions
 # ---------------------------------------------------------------------------
+
 
 @router.get("/recent-transactions", response_model=list[RecentTransactionItem])
 def analytics_recent_transactions(
@@ -168,14 +170,14 @@ def analytics_recent_transactions(
 # analytics.py lives at  <project>/core-exchange/src/routes/analytics.py
 # swarm log lives at     <project>/logs/swarm_activity.log
 _SWARM_LOG = (
-    Path(__file__).resolve().parent  # routes/
-    .parent                          # src/
-    .parent                          # core-exchange/
-    .parent                          # <project root>
-    / "logs" / "swarm_activity.log"
+    Path(__file__)
+    .resolve()
+    .parent.parent.parent.parent  # routes/  # src/  # core-exchange/  # <project root>
+    / "logs"
+    / "swarm_activity.log"
 )
-_TAIL_READ   = 100   # lines scanned for state parsing
-_TAIL_RETURN = 30    # lines returned to the UI terminal
+_TAIL_READ = 100  # lines scanned for state parsing
+_TAIL_RETURN = 30  # lines returned to the UI terminal
 
 # ---------------------------------------------------------------------------
 # In-memory swarm heartbeat store — populated by POST /swarm/heartbeat.
@@ -184,21 +186,13 @@ _TAIL_RETURN = 30    # lines returned to the UI terminal
 # ---------------------------------------------------------------------------
 _heartbeat: SwarmAnalyticsResponse | None = None
 _heartbeat_ts: float = 0.0
-_HEARTBEAT_TTL = 90.0   # seconds; beyond this the swarm is considered stopped
+_HEARTBEAT_TTL = 90.0  # seconds; beyond this the swarm is considered stopped
 
-_RE_DESK  = re.compile(
-    r"DESK\s+(\w+)\s+balance=([\d.]+)\s+USDC\s+ok=(\d+)\s+err=(\d+)"
-)
-_RE_SWARM = re.compile(
-    r"SWARM\s+iter=(\d+)\s+route_checks=(\d+)\s+viable=(\d+)"
-)
-_RE_TS    = re.compile(r"^(\d{2}:\d{2}:\d{2})")
-_RE_GAS_GUARD = re.compile(
-    r"GAS-GUARD\s+(\w+)\s+eth_balance=([\d.]+)"
-)
-_RE_EQUALIZE = re.compile(
-    r"EQUALIZE\s+\w+\s+.*requesting\s+([\d.]+)\s+USDC"
-)
+_RE_DESK = re.compile(r"DESK\s+(\w+)\s+balance=([\d.]+)\s+USDC\s+ok=(\d+)\s+err=(\d+)")
+_RE_SWARM = re.compile(r"SWARM\s+iter=(\d+)\s+route_checks=(\d+)\s+viable=(\d+)")
+_RE_TS = re.compile(r"^(\d{2}:\d{2}:\d{2})")
+_RE_GAS_GUARD = re.compile(r"GAS-GUARD\s+(\w+)\s+eth_balance=([\d.]+)")
+_RE_EQUALIZE = re.compile(r"EQUALIZE\s+\w+\s+.*requesting\s+([\d.]+)\s+USDC")
 # Matches: TRANSFER  Alpha   → Beta    $  30.00   50ms  OK  [swarm_equalization]
 _RE_EQ_TRANSFER = re.compile(
     r"TRANSFER\s+\S+\s+→\s+\S+\s+\$([\d.]+)\s+\S+\s+OK\s+\[swarm_equalization\]"
@@ -216,7 +210,9 @@ def _tail_log(path: Path, n: int) -> list[str]:
     return list(buf)
 
 
-@router.post("/swarm/heartbeat", response_model=SwarmAnalyticsResponse, include_in_schema=False)
+@router.post(
+    "/swarm/heartbeat", response_model=SwarmAnalyticsResponse, include_in_schema=False
+)
 def swarm_heartbeat(body: SwarmHeartbeatRequest) -> SwarmAnalyticsResponse:
     """
     Accepts a push heartbeat from seed_swarm.py (wherever it runs).
@@ -289,13 +285,13 @@ def analytics_swarm() -> SwarmAnalyticsResponse:
     scan_lines = _tail_log(_SWARM_LOG, _TAIL_READ)
 
     desks: dict[str, SwarmDeskState] = {}
-    iterations:             int | None = None
-    route_checks:           int | None = None
-    viable_routes:          int | None = None
-    last_activity:          str | None = None
-    equalization_count:     int = 0
-    equalization_volume:    float = 0.0
-    eth_balances:           dict[str, float] = {}
+    iterations: int | None = None
+    route_checks: int | None = None
+    viable_routes: int | None = None
+    last_activity: str | None = None
+    equalization_count: int = 0
+    equalization_volume: float = 0.0
+    eth_balances: dict[str, float] = {}
 
     for line in scan_lines:
         m = _RE_DESK.search(line)
@@ -309,16 +305,16 @@ def analytics_swarm() -> SwarmAnalyticsResponse:
             )
         m2 = _RE_SWARM.search(line)
         if m2:
-            iterations    = int(m2.group(1))
-            route_checks  = int(m2.group(2))
+            iterations = int(m2.group(1))
+            route_checks = int(m2.group(2))
             viable_routes = int(m2.group(3))
         ts = _RE_TS.match(line)
         if ts:
             last_activity = ts.group(1)
         meq = _RE_EQ_TRANSFER.search(line)
         if meq:
-            equalization_count   += 1
-            equalization_volume  += float(meq.group(1))
+            equalization_count += 1
+            equalization_volume += float(meq.group(1))
         mg = _RE_GAS_GUARD.search(line)
         if mg:
             eth_balances[mg.group(1)] = float(mg.group(2))
@@ -343,6 +339,7 @@ def analytics_swarm() -> SwarmAnalyticsResponse:
 # ---------------------------------------------------------------------------
 # GET /api/v1/analytics/treasury-breakdown
 # ---------------------------------------------------------------------------
+
 
 @router.get("/treasury-breakdown", response_model=TreasuryBreakdownResponse)
 def analytics_treasury_breakdown(
@@ -376,12 +373,14 @@ def analytics_treasury_breakdown(
     for row in rows:
         tx_type, cnt, vol, tax = row
         tax_f = float(tax or 0)
-        breakdown.append(TxTypeBreakdown(
-            tx_type=tx_type,
-            count=int(cnt or 0),
-            total_volume_usdc=float(vol or 0),
-            total_tax_usdc=tax_f,
-        ))
+        breakdown.append(
+            TxTypeBreakdown(
+                tx_type=tx_type,
+                count=int(cnt or 0),
+                total_volume_usdc=float(vol or 0),
+                total_tax_usdc=tax_f,
+            )
+        )
         if tx_type == "swarm_equalization":
             equalization_fees = tax_f
 

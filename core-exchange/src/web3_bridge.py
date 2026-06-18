@@ -78,7 +78,7 @@ _USDC_DECIMALS_DEFAULT: Final[int] = 6
 class OnchainSettlementResult:
     """Return value of process_onchain_settlement."""
 
-    status: str          # CONFIRMING | PENDING_SYNC | FAILED
+    status: str  # CONFIRMING | PENDING_SYNC | FAILED
     settlement_mode: str = "escrow"  # "escrow" | "p2p"
     net_tx_hash: str | None = None
     tax_tx_hash: str | None = None
@@ -162,9 +162,7 @@ class Web3Bridge:
         )
         w3 = AsyncWeb3(provider)
         if not await w3.is_connected():
-            raise Web3BridgeError(
-                f"Cannot reach RPC endpoint: {self.provider_url}"
-            )
+            raise Web3BridgeError(f"Cannot reach RPC endpoint: {self.provider_url}")
         self._w3 = w3
         return w3
 
@@ -336,9 +334,14 @@ class Web3Bridge:
             logger.info(
                 "onchain_settlement start mode=%s sender=%s receiver=%s "
                 "gross=%s tax=%s net=%s chain_id=%s max_fee_gwei=%.2f",
-                settlement_mode, sender_wallet, receiver_wallet,
-                gross_amount, tax_amount, net_amount,
-                chain_id, max_fee_gwei,
+                settlement_mode,
+                sender_wallet,
+                receiver_wallet,
+                gross_amount,
+                tax_amount,
+                net_amount,
+                chain_id,
+                max_fee_gwei,
             )
 
             # Defer if gas is unreasonably expensive to prevent protocol loss.
@@ -346,7 +349,8 @@ class Web3Bridge:
                 logger.warning(
                     "Gas spike detected (%.2f gwei > %d gwei ceiling) — "
                     "deferring settlement to PENDING_SYNC",
-                    max_fee_gwei, _MAX_GAS_PRICE_GWEI,
+                    max_fee_gwei,
+                    _MAX_GAS_PRICE_GWEI,
                 )
                 return OnchainSettlementResult(
                     status="PENDING_SYNC",
@@ -368,11 +372,13 @@ class Web3Bridge:
                     w3, self._account.address
                 )
                 if escrow_usdc_wei < gross_wei:
-                    escrow_human = escrow_usdc_wei / (10 ** decimals)
+                    escrow_human = escrow_usdc_wei / (10**decimals)
                     logger.warning(
                         "escrow_underfunded sender=%s gross=%.8f USDC "
                         "escrow_balance=%.8f USDC — deferring to PENDING_SYNC",
-                        sender_wallet, float(gross_amount), escrow_human,
+                        sender_wallet,
+                        float(gross_amount),
+                        escrow_human,
                     )
                     return OnchainSettlementResult(
                         status="PENDING_SYNC",

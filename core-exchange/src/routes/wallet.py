@@ -18,10 +18,14 @@ router = APIRouter(prefix="/api/v1/wallet", tags=["wallet"])
     response_model=WalletCreateResponse,
     responses={409: {"model": dict}},
 )
-def create_wallet(payload: WalletCreateRequest, db: Session = Depends(get_db)) -> WalletCreateResponse:
+def create_wallet(
+    payload: WalletCreateRequest, db: Session = Depends(get_db)
+) -> WalletCreateResponse:
     existing = db.get(AgentWallet, payload.agent_id)
     if existing is not None:
-        logger.warning("Wallet creation rejected — agent already exists: %s", payload.agent_id)
+        logger.warning(
+            "Wallet creation rejected — agent already exists: %s", payload.agent_id
+        )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Wallet already exists for agent_id '{payload.agent_id}'",
@@ -30,10 +34,11 @@ def create_wallet(payload: WalletCreateRequest, db: Session = Depends(get_db)) -
     if payload.wallet_address is not None:
         # HD wallet flow: caller derived the keypair; server registers the address only.
         wallet_address = payload.wallet_address
-        private_key    = ""
+        private_key = ""
         logger.info(
             "Registering client-derived wallet for agent=%s address=%s (server holds no key)",
-            payload.agent_id, wallet_address,
+            payload.agent_id,
+            wallet_address,
         )
     else:
         account = Account.create()
@@ -43,7 +48,8 @@ def create_wallet(payload: WalletCreateRequest, db: Session = Depends(get_db)) -
         wallet_address = account.address
         logger.info(
             "Created cryptographic wallet for agent=%s address=%s (private key not persisted)",
-            payload.agent_id, wallet_address,
+            payload.agent_id,
+            wallet_address,
         )
 
     wallet = AgentWallet(

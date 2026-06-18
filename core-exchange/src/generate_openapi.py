@@ -56,7 +56,10 @@ def write_schema(out_dir: Path | None = None, stdout: bool = False) -> Path | No
     target_dir.mkdir(parents=True, exist_ok=True)
     out_path = target_dir / "openapi.json"
     out_path.write_text(serialized, encoding="utf-8")
-    print(f"[generate_openapi] Wrote {out_path} ({len(serialized):,} bytes)", file=sys.stderr)
+    print(
+        f"[generate_openapi] Wrote {out_path} ({len(serialized):,} bytes)",
+        file=sys.stderr,
+    )
     return out_path
 
 

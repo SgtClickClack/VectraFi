@@ -34,7 +34,6 @@ import logging
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -55,15 +54,16 @@ from schemas import (
 logger = logging.getLogger("vectrafi.arbitrage")
 router = APIRouter(prefix="/api/v1/arbitrage", tags=["arbitrage"])
 
-_RELAY_HOPS         = 3
-_CANDIDATE_CAP      = 15              # top-N agents queried as relay candidates
-_TAX_NET            = Decimal("0.999")  # 1 − 0.1%
-_GAS_COST_PER_HOP   = Decimal("0.03")  # static L2 gas friction per leg (USDC)
+_RELAY_HOPS = 3
+_CANDIDATE_CAP = 15  # top-N agents queried as relay candidates
+_TAX_NET = Decimal("0.999")  # 1 − 0.1%
+_GAS_COST_PER_HOP = Decimal("0.03")  # static L2 gas friction per leg (USDC)
 
 
 # ---------------------------------------------------------------------------
 # Shared simulation primitive — used by both route-path and rebalance
 # ---------------------------------------------------------------------------
+
 
 def _simulate_chain(
     db: Session,
@@ -83,12 +83,12 @@ def _simulate_chain(
     Returns:
         (viable, steps, total_slippage_usdc, expected_output_usdc, rejection_reason)
     """
-    n      = len(chain)
+    n = len(chain)
     volume = Decimal(str(volume_usdc))
-    slip   = Decimal(str(slippage_tolerance_pct))
+    slip = Decimal(str(slippage_tolerance_pct))
 
-    total_slippage  = (volume * slip).quantize(Decimal("0.00000001"))
-    slip_floor      = (total_slippage / Decimal(n)).quantize(Decimal("0.00000001"))
+    total_slippage = (volume * slip).quantize(Decimal("0.00000001"))
+    slip_floor = (total_slippage / Decimal(n)).quantize(Decimal("0.00000001"))
     # expected_output is the value the trader receives after slippage.
     # Gas is captured in per_leg_cost (the viability floor) rather than
     # deducted from the output, keeping both quantities independently meaningful.
@@ -98,9 +98,7 @@ def _simulate_chain(
     # Batch-fetch all wallets in one query; build agent_id → wallet map.
     # ------------------------------------------------------------------
     wallet_rows: list[AgentWallet] = (
-        db.query(AgentWallet)
-        .filter(AgentWallet.agent_id.in_(chain))
-        .all()
+        db.query(AgentWallet).filter(AgentWallet.agent_id.in_(chain)).all()
     )
     wallet_map: dict[str, AgentWallet] = {w.agent_id: w for w in wallet_rows}
 
@@ -112,8 +110,7 @@ def _simulate_chain(
             SettlementTransaction.sender_id.in_(chain),
         )
         .union(
-            db.query(SettlementTransaction.receiver_id)
-            .filter(
+            db.query(SettlementTransaction.receiver_id).filter(
                 SettlementTransaction.on_chain_status == "PENDING_SYNC",
                 SettlementTransaction.receiver_id.in_(chain),
             )
@@ -136,12 +133,17 @@ def _simulate_chain(
         wallet = wallet_map.get(agent_id)
 
         if wallet is None:
-            steps.append(ArbitrageStepResult(
-                step=i, agent_id=agent_id,
-                balance_usdc=0.0, slippage_floor_usdc=float(slip_floor),
-                balance_sufficient=False, pending_sync_blocked=False,
-                wallet_found=False,
-            ))
+            steps.append(
+                ArbitrageStepResult(
+                    step=i,
+                    agent_id=agent_id,
+                    balance_usdc=0.0,
+                    slippage_floor_usdc=float(slip_floor),
+                    balance_sufficient=False,
+                    pending_sync_blocked=False,
+                    wallet_found=False,
+                )
+            )
             if rejection is None:
                 rejection = f"step {i}: agent '{agent_id}' has no registered wallet"
             continue
@@ -152,19 +154,22 @@ def _simulate_chain(
         if agent_id not in running_balance:
             running_balance[agent_id] = Decimal(str(wallet.balance_usdc))
         balance_before = running_balance[agent_id]
-        sufficient     = balance_before >= per_leg_cost
+        sufficient = balance_before >= per_leg_cost
 
         # Deduct cost in-memory (not persisted).
         running_balance[agent_id] = balance_before - per_leg_cost
 
-        steps.append(ArbitrageStepResult(
-            step=i, agent_id=agent_id,
-            balance_usdc=float(balance_before),
-            slippage_floor_usdc=float(slip_floor),
-            balance_sufficient=sufficient,
-            pending_sync_blocked=is_blocked,
-            wallet_found=True,
-        ))
+        steps.append(
+            ArbitrageStepResult(
+                step=i,
+                agent_id=agent_id,
+                balance_usdc=float(balance_before),
+                slippage_floor_usdc=float(slip_floor),
+                balance_sufficient=sufficient,
+                pending_sync_blocked=is_blocked,
+                wallet_found=True,
+            )
+        )
 
         if rejection is None:
             if is_blocked:
@@ -191,6 +196,7 @@ def _simulate_chain(
 # POST /api/v1/arbitrage/route-path
 # ---------------------------------------------------------------------------
 
+
 @router.post("/route-path", response_model=ArbitrageRouteResponse)
 def arbitrage_route_path(
     payload: ArbitrageRouteRequest,
@@ -204,15 +210,18 @@ def arbitrage_route_path(
     """
     chain = payload.agent_chain
     viable, steps, total_slip, expected_out, rejection = _simulate_chain(
-        db, chain, payload.volume_usdc, payload.slippage_tolerance_pct,
+        db,
+        chain,
+        payload.volume_usdc,
+        payload.slippage_tolerance_pct,
     )
 
     # Compute native-asset output using cached spot prices.
     # expected_output_usdc stays USDC-denominated (simulation invariant).
     # expected_output_native expresses the same value in exit_asset units.
-    prices          = get_active_prices()
+    prices = get_active_prices()
     entry_price_usd = Decimal(str(prices.get(payload.entry_asset, 1.0)))
-    exit_price_usd  = Decimal(str(prices.get(payload.exit_asset,  1.0)))
+    exit_price_usd = Decimal(str(prices.get(payload.exit_asset, 1.0)))
 
     if exit_price_usd == Decimal("0"):
         conversion_factor = Decimal("1")
@@ -221,16 +230,19 @@ def arbitrage_route_path(
             Decimal("0.00000001")
         )
 
-    expected_out_native = float(
-        Decimal(str(expected_out)) * conversion_factor
-    )
+    expected_out_native = float(Decimal(str(expected_out)) * conversion_factor)
 
     logger.info(
         "Arbitrage route-path dry-run: viable=%s agents=%d volume=%.4f "
         "total_slip=%.4f entry=%s exit=%s factor=%.8f reason=%s",
-        viable, len(chain), payload.volume_usdc, total_slip,
-        payload.entry_asset, payload.exit_asset,
-        float(conversion_factor), rejection,
+        viable,
+        len(chain),
+        payload.volume_usdc,
+        total_slip,
+        payload.entry_asset,
+        payload.exit_asset,
+        float(conversion_factor),
+        rejection,
     )
 
     return ArbitrageRouteResponse(
@@ -251,6 +263,7 @@ def arbitrage_route_path(
 # ---------------------------------------------------------------------------
 # POST /api/v1/arbitrage/rebalance
 # ---------------------------------------------------------------------------
+
 
 @router.post("/rebalance", response_model=RebalanceResponse)
 def rebalance_agent_balance(
@@ -283,8 +296,8 @@ def rebalance_agent_balance(
             detail=f"No wallet found for target_agent_id '{payload.target_agent_id}'",
         )
 
-    volume      = Decimal(str(payload.volume_usdc))
-    floor       = (volume * Decimal(str(payload.slippage_tolerance_pct))).quantize(
+    volume = Decimal(str(payload.volume_usdc))
+    floor = (volume * Decimal(str(payload.slippage_tolerance_pct))).quantize(
         Decimal("0.00000001")
     )
     pre_balance = Decimal(str(target.balance_usdc))
@@ -315,8 +328,9 @@ def rebalance_agent_balance(
         db.query(SettlementTransaction.sender_id)
         .filter(SettlementTransaction.on_chain_status == "PENDING_SYNC")
         .union(
-            db.query(SettlementTransaction.receiver_id)
-            .filter(SettlementTransaction.on_chain_status == "PENDING_SYNC")
+            db.query(SettlementTransaction.receiver_id).filter(
+                SettlementTransaction.on_chain_status == "PENDING_SYNC"
+            )
         )
         .all()
     )
@@ -351,14 +365,17 @@ def rebalance_agent_balance(
     # 4. Simulate viability (dry-run, savepoint rolled back)
     # ------------------------------------------------------------------
     viable, _, _, _, sim_rejection = _simulate_chain(
-        db, relay_ids, payload.volume_usdc, payload.slippage_tolerance_pct,
+        db,
+        relay_ids,
+        payload.volume_usdc,
+        payload.slippage_tolerance_pct,
     )
 
     # Hard check: relay_0 must hold the full gross volume to initiate hop 0.
     if viable:
         relay_0_balance = Decimal(str(candidates[0].balance_usdc))
         if relay_0_balance < volume:
-            viable        = False
+            viable = False
             sim_rejection = (
                 f"relay_0 '{relay_ids[0]}' balance {float(relay_0_balance):.8f} USDC "
                 f"is below required volume {payload.volume_usdc:.8f} USDC"
@@ -387,11 +404,9 @@ def rebalance_agent_balance(
     # ------------------------------------------------------------------
     hop_gross: list[Decimal] = [volume]
     for _ in range(_RELAY_HOPS - 1):
-        hop_gross.append(
-            (hop_gross[-1] * _TAX_NET).quantize(Decimal("0.00000001"))
-        )
+        hop_gross.append((hop_gross[-1] * _TAX_NET).quantize(Decimal("0.00000001")))
 
-    senders   = [relay_ids[0], relay_ids[1], relay_ids[2]]
+    senders = [relay_ids[0], relay_ids[1], relay_ids[2]]
     receivers = [relay_ids[1], relay_ids[2], payload.target_agent_id]
 
     executed: list[RebalanceHop] = []
@@ -402,18 +417,23 @@ def rebalance_agent_balance(
             zip(senders, receivers, hop_gross)
         ):
             tx = _execute_transfer(
-                db, sender_id, receiver_id,
-                float(gross), "internal_rebalance",
+                db,
+                sender_id,
+                receiver_id,
+                float(gross),
+                "internal_rebalance",
             )
-            executed.append(RebalanceHop(
-                hop=i,
-                sender_id=tx.sender_id,
-                receiver_id=tx.receiver_id,
-                gross_amount_usdc=float(tx.gross_amount_usdc),
-                tax_amount_usdc=float(tx.tax_amount_usdc),
-                net_amount_usdc=float(tx.net_amount_usdc),
-                tx_id=tx.tx_id,
-            ))
+            executed.append(
+                RebalanceHop(
+                    hop=i,
+                    sender_id=tx.sender_id,
+                    receiver_id=tx.receiver_id,
+                    gross_amount_usdc=float(tx.gross_amount_usdc),
+                    tax_amount_usdc=float(tx.tax_amount_usdc),
+                    net_amount_usdc=float(tx.net_amount_usdc),
+                    tx_id=tx.tx_id,
+                )
+            )
             total_tax += Decimal(str(tx.tax_amount_usdc))
 
         db.commit()
@@ -429,8 +449,7 @@ def rebalance_agent_balance(
     post_balance = Decimal(str(target.balance_usdc))
 
     logger.info(
-        "Rebalance complete: target=%s pre=%.6f post=%.6f "
-        "relay=%s total_tax=%.6f",
+        "Rebalance complete: target=%s pre=%.6f post=%.6f " "relay=%s total_tax=%.6f",
         payload.target_agent_id,
         float(pre_balance),
         float(post_balance),
@@ -454,6 +473,7 @@ def rebalance_agent_balance(
 # ---------------------------------------------------------------------------
 # POST /api/v1/arbitrage/scan-paths
 # ---------------------------------------------------------------------------
+
 
 @router.post("/scan-paths", response_model=ScanPathsResponse)
 def scan_paths(
@@ -491,7 +511,10 @@ def scan_paths(
             sp = db.begin_nested()
             try:
                 viable, steps, total_slip, expected_out, rejection = _simulate_chain(
-                    db, chain_list, payload.volume_usdc, payload.slippage_tolerance_pct,
+                    db,
+                    chain_list,
+                    payload.volume_usdc,
+                    payload.slippage_tolerance_pct,
                 )
             finally:
                 sp.rollback()
@@ -499,31 +522,38 @@ def scan_paths(
             # Gracefully degrade on RPC/network timeout or unexpected DB error
             # so a single bad pool cannot abort the full sweep.
             logger.warning("scan-paths: path %s raised %s — skipping", chain_list, exc)
-            results.append(PathScanResult(
-                path=chain_list,
-                viable=False,
-                steps=[],
-                expected_output_usdc=0.0,
-                total_slippage_usdc=0.0,
-                rejection_reason=f"simulation error: {exc}",
-            ))
+            results.append(
+                PathScanResult(
+                    path=chain_list,
+                    viable=False,
+                    steps=[],
+                    expected_output_usdc=0.0,
+                    total_slippage_usdc=0.0,
+                    rejection_reason=f"simulation error: {exc}",
+                )
+            )
             continue
 
         if viable:
             viable_count += 1
 
-        results.append(PathScanResult(
-            path=chain_list,
-            viable=viable,
-            steps=steps,
-            expected_output_usdc=expected_out,
-            total_slippage_usdc=total_slip,
-            rejection_reason=rejection,
-        ))
+        results.append(
+            PathScanResult(
+                path=chain_list,
+                viable=viable,
+                steps=steps,
+                expected_output_usdc=expected_out,
+                total_slippage_usdc=total_slip,
+                rejection_reason=rejection,
+            )
+        )
 
     logger.info(
         "scan-paths: candidates=%d path_len=%d checked=%d viable=%d",
-        len(candidates), payload.path_length, len(results), viable_count,
+        len(candidates),
+        payload.path_length,
+        len(results),
+        viable_count,
     )
 
     return ScanPathsResponse(

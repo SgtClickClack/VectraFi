@@ -23,7 +23,9 @@ def init_web3_provider() -> None:
         return
 
     try:
-        provider = Web3(Web3.HTTPProvider(RPC_PROVIDER_URL, request_kwargs={"timeout": 10}))
+        provider = Web3(
+            Web3.HTTPProvider(RPC_PROVIDER_URL, request_kwargs={"timeout": 10})
+        )
         if not provider.is_connected():
             raise Web3Exception("RPC provider connection check failed")
 

@@ -38,13 +38,14 @@ if TYPE_CHECKING:
 # module's decisions are always aligned with the authoritative values.
 # These are intentionally not imported from those modules to keep this module
 # free of heavy transitive imports (web3, SQLAlchemy, FastAPI) during tests.
-_GAS_COST_PER_HOP_USDC: float = 0.05   # static L2 gas friction per leg
-_TAX_FRACTION:          float = 0.001  # 0.1% platform tax
+_GAS_COST_PER_HOP_USDC: float = 0.05  # static L2 gas friction per leg
+_TAX_FRACTION: float = 0.001  # 0.1% platform tax
 
 
 # ---------------------------------------------------------------------------
 # Route viability pre-check
 # ---------------------------------------------------------------------------
+
 
 def is_route_viable_local(
     balances: list[float],
@@ -78,8 +79,8 @@ def is_route_viable_local(
         return False
 
     total_slippage = volume_usdc * slippage_pct
-    slip_floor     = total_slippage / n
-    per_leg_cost   = slip_floor + gas_cost_per_hop
+    slip_floor = total_slippage / n
+    per_leg_cost = slip_floor + gas_cost_per_hop
 
     return all(b >= per_leg_cost for b in balances)
 
@@ -87,6 +88,7 @@ def is_route_viable_local(
 # ---------------------------------------------------------------------------
 # Transfer sender selection
 # ---------------------------------------------------------------------------
+
 
 def select_transfer_pair(
     desks: list,
@@ -117,7 +119,7 @@ def select_transfer_pair(
     if not others:
         return None
 
-    sender   = max(eligible, key=lambda d: d.balance_usdc)
+    sender = max(eligible, key=lambda d: d.balance_usdc)
     receiver = min(
         [d for d in desks if d is not sender],
         key=lambda d: d.balance_usdc,
@@ -128,6 +130,7 @@ def select_transfer_pair(
 # ---------------------------------------------------------------------------
 # Equalization decisions
 # ---------------------------------------------------------------------------
+
 
 def compute_top_up(
     balance_usdc: float,
@@ -174,7 +177,8 @@ def select_equalization_donor(
         live_mode:     True when the bridge is in live_rpc mode.
     """
     candidates = [
-        d for d in desks
+        d
+        for d in desks
         if d is not stalled_desk
         and d.balance_usdc > target_usdc + top_up_usdc
         and (not live_mode or d.eth_balance >= gas_floor_eth)
@@ -187,6 +191,7 @@ def select_equalization_donor(
 # ---------------------------------------------------------------------------
 # Rebalance trigger decision
 # ---------------------------------------------------------------------------
+
 
 def needs_server_rebalance(
     balance_usdc: float,
@@ -211,6 +216,7 @@ def needs_server_rebalance(
 # ---------------------------------------------------------------------------
 # Tax-to-overhead ratio guard
 # ---------------------------------------------------------------------------
+
 
 def tax_covers_overhead(
     transfer_amount_usdc: float,

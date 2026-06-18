@@ -13,6 +13,7 @@ Recovery routing:
 All resubmissions apply a 20% gas price premium over the current network base
 fee to unstick mempool-lagging transactions.
 """
+
 from __future__ import annotations
 
 import logging
@@ -35,7 +36,7 @@ _GAS_PREMIUM = Decimal("1.2")
 @dataclass
 class RecoveryOutcome:
     tx_id: str
-    new_status: str             # "CONFIRMING" | "PENDING_SYNC" (unchanged)
+    new_status: str  # "CONFIRMING" | "PENDING_SYNC" (unchanged)
     net_tx_hash: str | None = None
     tax_tx_hash: str | None = None
     leg1_skipped: bool = False  # True when Leg 1 hash already existed
@@ -92,16 +93,22 @@ async def _recover_single(
             )
             logger.info(
                 "recovery tx=%s FULL_RETRY nonce=%d premium_max_fee_gwei=%.2f",
-                tx.tx_id, nonce, premium_max_fee / 1e9,
+                tx.tx_id,
+                nonce,
+                premium_max_fee / 1e9,
             )
             net_tx_hash = await bridge._build_and_send_transfer(
-                w3, receiver_wallet.wallet_address, net_wei,
+                w3,
+                receiver_wallet.wallet_address,
+                net_wei,
                 nonce=nonce,
                 max_fee_per_gas=premium_max_fee,
                 max_priority_fee_per_gas=max_priority_fee_per_gas,
                 chain_id=chain_id,
             )
-            logger.info("recovery tx=%s leg1_submitted net_hash=%s", tx.tx_id, net_tx_hash)
+            logger.info(
+                "recovery tx=%s leg1_submitted net_hash=%s", tx.tx_id, net_tx_hash
+            )
             nonce_for_tax = nonce + 1
 
         else:
@@ -121,11 +128,15 @@ async def _recover_single(
             status_note = "mined" if receipt else "pending/unknown"
             logger.info(
                 "recovery tx=%s LEG2_ONLY leg1_status=%s nonce_for_tax=%d",
-                tx.tx_id, status_note, nonce_for_tax,
+                tx.tx_id,
+                status_note,
+                nonce_for_tax,
             )
 
         tax_tx_hash = await bridge._build_and_send_transfer(
-            w3, bridge.treasury_address, tax_wei,
+            w3,
+            bridge.treasury_address,
+            tax_wei,
             nonce=nonce_for_tax,
             max_fee_per_gas=premium_max_fee,
             max_priority_fee_per_gas=max_priority_fee_per_gas,
@@ -180,11 +191,15 @@ async def run_recovery(
         logger.info("recovery_worker: bridge not configured — skipping run")
         return {"total": 0, "recovered": 0, "skipped": 0, "errors": 0, "outcomes": []}
 
-    rows = db.execute(
-        select(SettlementTransaction).where(
-            SettlementTransaction.on_chain_status == "PENDING_SYNC"
+    rows = (
+        db.execute(
+            select(SettlementTransaction).where(
+                SettlementTransaction.on_chain_status == "PENDING_SYNC"
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     logger.info("recovery_worker: found %d PENDING_SYNC row(s)", len(rows))
 
@@ -204,9 +219,9 @@ async def run_recovery(
     db.commit()
 
     return {
-        "total":     len(rows),
+        "total": len(rows),
         "recovered": recovered,
-        "skipped":   skipped,
-        "errors":    errors,
-        "outcomes":  outcomes,
+        "skipped": skipped,
+        "errors": errors,
+        "outcomes": outcomes,
     }

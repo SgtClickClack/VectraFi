@@ -18,10 +18,10 @@ _connect_args = {"check_same_thread": False} if _is_sqlite else {}
 _pool_kwargs: dict = {}
 if not _is_sqlite:
     _pool_kwargs = {
-        "pool_pre_ping": True,   # detect stale Railway proxy connections before use
+        "pool_pre_ping": True,  # detect stale Railway proxy connections before use
         "pool_size": 5,
         "max_overflow": 10,
-        "pool_recycle": 300,     # recycle connections every 5 min to avoid proxy drops
+        "pool_recycle": 300,  # recycle connections every 5 min to avoid proxy drops
     }
 
 engine = create_engine(
@@ -45,7 +45,12 @@ def get_db():
 
 
 def init_db() -> None:
-    from models import AgentWallet, SettlementTransaction, TreasuryState, UsedNonce  # noqa: F401
+    from models import (  # noqa: F401
+        AgentWallet,
+        SettlementTransaction,
+        TreasuryState,
+        UsedNonce,
+    )
 
     Base.metadata.create_all(bind=engine)
 
@@ -59,16 +64,27 @@ def init_db() -> None:
             }
             if "bounty_pool_fees_usdc" not in existing:
                 conn.execute(
-                    text("ALTER TABLE treasury_state ADD COLUMN bounty_pool_fees_usdc REAL NOT NULL DEFAULT 0.0")
+                    text(
+                        "ALTER TABLE treasury_state ADD COLUMN bounty_pool_fees_usdc REAL NOT NULL DEFAULT 0.0"
+                    )
                 )
                 conn.commit()
-                logger.info("Migrated treasury_state: added bounty_pool_fees_usdc column")
+                logger.info(
+                    "Migrated treasury_state: added bounty_pool_fees_usdc column"
+                )
 
     with SessionLocal() as db:
         treasury = db.get(TreasuryState, 1)
         if treasury is None:
             from decimal import Decimal
-            db.add(TreasuryState(id=1, accumulated_fees_usdc=Decimal("0"), bounty_pool_fees_usdc=Decimal("0")))
+
+            db.add(
+                TreasuryState(
+                    id=1,
+                    accumulated_fees_usdc=Decimal("0"),
+                    bounty_pool_fees_usdc=Decimal("0"),
+                )
+            )
             db.commit()
             logger.info("Initialized treasury state")
 

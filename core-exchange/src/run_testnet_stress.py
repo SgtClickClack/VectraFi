@@ -33,7 +33,7 @@ import os
 import sys
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import httpx
 from eth_account import Account
@@ -46,22 +46,22 @@ _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 if _THIS_DIR not in sys.path:
     sys.path.insert(0, _THIS_DIR)
 
-from config import PROTOCOL_DOMAIN          # "vectrafi-sandbox-v1"
-from database import SessionLocal
-from models import SettlementTransaction
-from recovery_worker import run_recovery
+from config import PROTOCOL_DOMAIN  # noqa: E402 - path bootstrap above
+from database import SessionLocal  # noqa: E402 - path bootstrap above
+from models import SettlementTransaction  # noqa: E402 - path bootstrap above
+from recovery_worker import run_recovery  # noqa: E402 - path bootstrap above
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-_API_BASE      = (
+_API_BASE = (
     os.getenv("STRESS_API_BASE")
     or os.getenv("VECTRAFI_API_URL")
     or "http://127.0.0.1:8000"
 ).rstrip("/")
-_EXPLORER_TX   = "https://sepolia.basescan.org/tx/{hash}"
-_HTTP_TIMEOUT  = httpx.Timeout(connect=5.0, read=30.0, write=5.0, pool=5.0)
-_BATCH_SIZE    = 5
+_EXPLORER_TX = "https://sepolia.basescan.org/tx/{hash}"
+_HTTP_TIMEOUT = httpx.Timeout(connect=5.0, read=30.0, write=5.0, pool=5.0)
+_BATCH_SIZE = 5
 
 logging.basicConfig(
     level=logging.INFO,
@@ -75,31 +75,33 @@ log = logging.getLogger("stress")
 # Data classes
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class AgentInfo:
-    agent_id:       str
+    agent_id: str
     wallet_address: str
-    private_key:    str
-    balance_usdc:   float
+    private_key: str
+    balance_usdc: float
 
 
 @dataclass
 class TransferResult:
-    idx:          int
-    sender_id:    str
-    receiver_id:  str
-    amount_usdc:  float
-    status_code:  int              = 0
-    tx_id:        str | None       = None
-    error:        str | None       = None
-    elapsed_ms:   float            = 0.0
-    timed_out:    bool             = False
-    nonce_collision: bool          = False
+    idx: int
+    sender_id: str
+    receiver_id: str
+    amount_usdc: float
+    status_code: int = 0
+    tx_id: str | None = None
+    error: str | None = None
+    elapsed_ms: float = 0.0
+    timed_out: bool = False
+    nonce_collision: bool = False
 
 
 # ---------------------------------------------------------------------------
 # Signing helper
 # ---------------------------------------------------------------------------
+
 
 def _signed_body(
     body: dict,
@@ -110,15 +112,16 @@ def _signed_body(
     The bytes sent over the wire and the string signed must be identical —
     server does body_bytes.decode('utf-8') then encode_defunct(text=...).
     """
-    compact  = json.dumps(body, separators=(",", ":"))
-    msg      = encode_defunct(text=compact)
-    sig      = Account.sign_message(msg, private_key=private_key)
+    compact = json.dumps(body, separators=(",", ":"))
+    msg = encode_defunct(text=compact)
+    sig = Account.sign_message(msg, private_key=private_key)
     return compact.encode("utf-8"), sig.signature.hex()
 
 
 # ---------------------------------------------------------------------------
 # Step 1 — wallet provisioning
 # ---------------------------------------------------------------------------
+
 
 async def provision_wallets(
     client: httpx.AsyncClient,
@@ -139,14 +142,16 @@ async def provision_wallets(
         if resp.status_code in (200, 201):
             d = resp.json()
             agents[name] = AgentInfo(
-                agent_id       = d["agent_id"],
-                wallet_address = d["wallet_address"],
-                private_key    = d["private_key"],
-                balance_usdc   = d["balance_usdc"],
+                agent_id=d["agent_id"],
+                wallet_address=d["wallet_address"],
+                private_key=d["private_key"],
+                balance_usdc=d["balance_usdc"],
             )
             log.info(
                 "  WALLET %-26s  address=%.14s…  balance=%.2f USDC",
-                agent_id, d["wallet_address"], d["balance_usdc"],
+                agent_id,
+                d["wallet_address"],
+                d["balance_usdc"],
             )
         elif resp.status_code == 409:
             log.warning("  WALLET SKIP %-26s  already exists (409)", agent_id)
@@ -162,30 +167,31 @@ async def provision_wallets(
 # Step 2 — individual signed transfer
 # ---------------------------------------------------------------------------
 
+
 async def fire_transfer(
-    client:      httpx.AsyncClient,
-    idx:         int,
-    sender:      AgentInfo,
-    receiver:    AgentInfo,
+    client: httpx.AsyncClient,
+    idx: int,
+    sender: AgentInfo,
+    receiver: AgentInfo,
     amount_usdc: float,
 ) -> TransferResult:
     result = TransferResult(
-        idx         = idx,
-        sender_id   = sender.agent_id,
-        receiver_id = receiver.agent_id,
-        amount_usdc = amount_usdc,
+        idx=idx,
+        sender_id=sender.agent_id,
+        receiver_id=receiver.agent_id,
+        amount_usdc=amount_usdc,
     )
 
     body = {
-        "agent_id":       sender.agent_id,
+        "agent_id": sender.agent_id,
         "wallet_address": sender.wallet_address,
-        "receiver_id":    receiver.agent_id,
-        "amount_usdc":    amount_usdc,
-        "tx_type":        "stress_transfer",
+        "receiver_id": receiver.agent_id,
+        "amount_usdc": amount_usdc,
+        "tx_type": "stress_transfer",
         # Replay-protection fields required by verify_signed_payload (F-02)
-        "nonce":          str(uuid.uuid4()),
-        "issued_at":      int(time.time()),
-        "chain_id":       PROTOCOL_DOMAIN,
+        "nonce": str(uuid.uuid4()),
+        "issued_at": int(time.time()),
+        "chain_id": PROTOCOL_DOMAIN,
     }
 
     raw_body, sig_hex = _signed_body(body, sender.private_key)
@@ -196,11 +202,11 @@ async def fire_transfer(
             f"{_API_BASE}/api/v1/settlement/transfer",
             content=raw_body,
             headers={
-                "Content-Type":        "application/json",
+                "Content-Type": "application/json",
                 "X-VectraFi-Signature": sig_hex,
             },
         )
-        result.elapsed_ms  = (time.perf_counter() - t0) * 1000
+        result.elapsed_ms = (time.perf_counter() - t0) * 1000
         result.status_code = resp.status_code
 
         if resp.status_code == 200:
@@ -212,12 +218,12 @@ async def fire_transfer(
             result.error = f"HTTP {resp.status_code}: {resp.text[:200]}"
 
     except httpx.TimeoutException as exc:
-        result.elapsed_ms  = (time.perf_counter() - t0) * 1000
-        result.timed_out   = True
-        result.error       = f"RPC_TIMEOUT: {exc}"
+        result.elapsed_ms = (time.perf_counter() - t0) * 1000
+        result.timed_out = True
+        result.error = f"RPC_TIMEOUT: {exc}"
     except Exception as exc:  # noqa: BLE001
-        result.elapsed_ms  = (time.perf_counter() - t0) * 1000
-        result.error       = f"UNEXPECTED: {exc}"
+        result.elapsed_ms = (time.perf_counter() - t0) * 1000
+        result.error = f"UNEXPECTED: {exc}"
 
     return result
 
@@ -227,20 +233,21 @@ async def fire_transfer(
 #           after the HTTP response is committed; we read them directly here)
 # ---------------------------------------------------------------------------
 
+
 def _ensure_onchain_columns(db) -> None:
     """
     Add on_chain_* columns to settlement_transactions if the live SQLite schema
     predates the model definition (create_all never alters existing tables).
     """
     from sqlalchemy import text
+
     existing = {
-        row[1]
-        for row in db.execute(text("PRAGMA table_info(settlement_transactions)"))
+        row[1] for row in db.execute(text("PRAGMA table_info(settlement_transactions)"))
     }
     needed = {
-        "on_chain_status":       "ALTER TABLE settlement_transactions ADD COLUMN on_chain_status TEXT",
-        "on_chain_net_tx_hash":  "ALTER TABLE settlement_transactions ADD COLUMN on_chain_net_tx_hash TEXT",
-        "on_chain_tax_tx_hash":  "ALTER TABLE settlement_transactions ADD COLUMN on_chain_tax_tx_hash TEXT",
+        "on_chain_status": "ALTER TABLE settlement_transactions ADD COLUMN on_chain_status TEXT",
+        "on_chain_net_tx_hash": "ALTER TABLE settlement_transactions ADD COLUMN on_chain_net_tx_hash TEXT",
+        "on_chain_tax_tx_hash": "ALTER TABLE settlement_transactions ADD COLUMN on_chain_tax_tx_hash TEXT",
     }
     for col, ddl in needed.items():
         if col not in existing:
@@ -256,6 +263,7 @@ def _fetch_onchain_data(
     """Return {tx_id: (net_hash, tax_hash, on_chain_status)} for each tx_id."""
     _ensure_onchain_columns(db)
     from sqlalchemy import select
+
     rows = db.execute(
         select(
             SettlementTransaction.tx_id,
@@ -278,9 +286,11 @@ def _fetch_onchain_data(
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _is_bridge_live() -> bool:
     try:
         from web3_bridge import bridge
+
         return bridge.is_configured
     except Exception:
         return False
@@ -294,6 +304,7 @@ def _section(title: str) -> None:
 # ---------------------------------------------------------------------------
 # Main orchestration
 # ---------------------------------------------------------------------------
+
 
 async def main() -> None:
     run_id = uuid.uuid4().hex[:6]
@@ -319,8 +330,11 @@ async def main() -> None:
     bridge_live = _is_bridge_live()
     log.info(
         "  L2 bridge mode: %s",
-        "LIVE — on-chain broadcasts enabled" if bridge_live
-        else "SANDBOX — ledger-only, no RPC calls",
+        (
+            "LIVE — on-chain broadcasts enabled"
+            if bridge_live
+            else "SANDBOX — ledger-only, no RPC calls"
+        ),
     )
 
     async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
@@ -334,7 +348,11 @@ async def main() -> None:
             log.error("  Could not provision all 3 wallets — aborting")
             sys.exit(1)
 
-        alpha, beta, gamma = agents["Agent_Alpha"], agents["Agent_Beta"], agents["Agent_Gamma"]
+        alpha, beta, gamma = (
+            agents["Agent_Alpha"],
+            agents["Agent_Beta"],
+            agents["Agent_Gamma"],
+        )
 
         # ------------------------------------------------------------------
         # Step 2: 5 parallel settlement transfers
@@ -353,17 +371,19 @@ async def main() -> None:
         log.info("  Lock-order invariant: sorted([sender, receiver]) → no deadlock")
 
         transfer_specs: list[tuple[int, AgentInfo, AgentInfo, float]] = [
-            (0, alpha, beta,   25.0),
-            (1, beta,  gamma,  20.0),
-            (2, gamma, alpha,  15.0),
-            (3, alpha, gamma,  12.0),
-            (4, beta,  alpha,  30.0),
+            (0, alpha, beta, 25.0),
+            (1, beta, gamma, 20.0),
+            (2, gamma, alpha, 15.0),
+            (3, alpha, gamma, 12.0),
+            (4, beta, alpha, 30.0),
         ]
 
         log.info("  Dispatching %d coroutines concurrently …", _BATCH_SIZE)
         raw_results = await asyncio.gather(
-            *[fire_transfer(client, idx, s, r, amt)
-              for idx, s, r, amt in transfer_specs],
+            *[
+                fire_transfer(client, idx, s, r, amt)
+                for idx, s, r, amt in transfer_specs
+            ],
             return_exceptions=True,
         )
 
@@ -373,9 +393,9 @@ async def main() -> None:
         _section("STEP 3: TRANSFER RESULTS")
 
         results: list[TransferResult] = []
-        ok_tx_ids:          list[str] = []
-        timeout_detected:   bool      = False
-        collision_detected: bool      = False
+        ok_tx_ids: list[str] = []
+        timeout_detected: bool = False
+        collision_detected: bool = False
 
         for raw in raw_results:
             if isinstance(raw, BaseException):
@@ -384,24 +404,28 @@ async def main() -> None:
             r: TransferResult = raw
             results.append(r)
 
-            tag  = "OK " if r.status_code == 200 else "ERR"
-            s_sh = r.sender_id.split("_")[1]   # "Alpha" / "Beta" / "Gamma"
+            tag = "OK " if r.status_code == 200 else "ERR"
+            s_sh = r.sender_id.split("_")[1]  # "Alpha" / "Beta" / "Gamma"
             r_sh = r.receiver_id.split("_")[1]
             log.info(
-                "  [TX %d][%s] %-7s → %-7s  $%6.2f  %5.0fms"
-                "  tx_id=%-38s  %s",
-                r.idx, tag, s_sh, r_sh, r.amount_usdc, r.elapsed_ms,
+                "  [TX %d][%s] %-7s → %-7s  $%6.2f  %5.0fms" "  tx_id=%-38s  %s",
+                r.idx,
+                tag,
+                s_sh,
+                r_sh,
+                r.amount_usdc,
+                r.elapsed_ms,
                 r.tx_id or "—",
                 r.error or "",
             )
             if r.tx_id:
                 ok_tx_ids.append(r.tx_id)
             if r.timed_out:
-                timeout_detected   = True
+                timeout_detected = True
             if r.nonce_collision:
                 collision_detected = True
 
-        ok_count  = sum(1 for r in results if r.status_code == 200)
+        ok_count = sum(1 for r in results if r.status_code == 200)
         err_count = len(results) - ok_count
         log.info("  Batch complete: %d ok  |  %d error", ok_count, err_count)
 
@@ -421,7 +445,9 @@ async def main() -> None:
                 status_str = on_chain_status or "SANDBOX"
                 log.info(
                     "  tx_id=%.12s…  status=%-14s  net_hash=%s",
-                    tx_id, status_str, net_hash or "—",
+                    tx_id,
+                    status_str,
+                    net_hash or "—",
                 )
                 if net_hash:
                     found_any_hash = True
@@ -446,8 +472,10 @@ async def main() -> None:
 
             if timeout_detected or collision_detected:
                 reasons = []
-                if timeout_detected:   reasons.append("RPC timeout")
-                if collision_detected: reasons.append("nonce collision")
+                if timeout_detected:
+                    reasons.append("RPC timeout")
+                if collision_detected:
+                    reasons.append("nonce collision")
                 log.info(
                     "  Error signal(s) detected: %s — invoking run_recovery() …",
                     ", ".join(reasons),
@@ -488,15 +516,27 @@ async def main() -> None:
         # ------------------------------------------------------------------
         _section("SUMMARY")
         log.info("  run_id           : %s", run_id)
-        log.info("  wallets created  : 3  (%s, %s, %s)",
-                 alpha.agent_id, beta.agent_id, gamma.agent_id)
-        log.info("  transfers fired  : %d  |  %d ok  |  %d error",
-                 _BATCH_SIZE, ok_count, err_count)
-        log.info("  on-chain mode    : %s",
-                 "LIVE — hashes logged above" if found_any_hash else "SANDBOX")
-        log.info("  recovery result  : %d PENDING_SYNC found  |  %d recovered",
-                 recovery_result.get("total", 0),
-                 recovery_result.get("recovered", 0))
+        log.info(
+            "  wallets created  : 3  (%s, %s, %s)",
+            alpha.agent_id,
+            beta.agent_id,
+            gamma.agent_id,
+        )
+        log.info(
+            "  transfers fired  : %d  |  %d ok  |  %d error",
+            _BATCH_SIZE,
+            ok_count,
+            err_count,
+        )
+        log.info(
+            "  on-chain mode    : %s",
+            "LIVE — hashes logged above" if found_any_hash else "SANDBOX",
+        )
+        log.info(
+            "  recovery result  : %d PENDING_SYNC found  |  %d recovered",
+            recovery_result.get("total", 0),
+            recovery_result.get("recovered", 0),
+        )
 
         if ok_count == _BATCH_SIZE:
             log.info(
@@ -507,7 +547,8 @@ async def main() -> None:
         else:
             log.info(
                 "  STATUS           : PARTIAL — %d/%d succeeded  (see ERR lines above)",
-                ok_count, _BATCH_SIZE,
+                ok_count,
+                _BATCH_SIZE,
             )
 
 

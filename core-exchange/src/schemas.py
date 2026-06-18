@@ -124,9 +124,13 @@ class DepositResponse(BaseModel):
 
 
 class SettlementTransferRequest(BaseModel):
-    agent_id: str = Field(..., min_length=1, max_length=64, description="Sender agent_id")
+    agent_id: str = Field(
+        ..., min_length=1, max_length=64, description="Sender agent_id"
+    )
     wallet_address: str = Field(..., min_length=42, max_length=42)
-    receiver_id: str = Field(..., min_length=1, max_length=64, description="Receiver agent_id")
+    receiver_id: str = Field(
+        ..., min_length=1, max_length=64, description="Receiver agent_id"
+    )
     amount_usdc: float = Field(..., gt=0, description="Gross transfer amount in USDC")
     tx_type: str = Field(default="peer_transfer", min_length=1, max_length=32)
 
@@ -152,12 +156,16 @@ class SettlementTransferResponse(BaseModel):
 
 
 class BountyClaimRequest(BaseModel):
-    agent_id: str = Field(..., min_length=1, max_length=64, description="Claimant agent_id")
+    agent_id: str = Field(
+        ..., min_length=1, max_length=64, description="Claimant agent_id"
+    )
     wallet_address: str = Field(..., min_length=42, max_length=42)
     counterpart_id: str = Field(..., min_length=1, max_length=64)
     bounty_amount_usdc: float = Field(..., gt=0)
     counterpart_share_pct: float = Field(
-        ..., gt=0, lt=1,
+        ...,
+        gt=0,
+        lt=1,
         description="Fraction of bounty_amount_usdc transferred to counterpart (0 < x < 1)",
     )
 
@@ -224,10 +232,12 @@ class ErrorResponse(BaseModel):
 # Arbitrage router schemas
 # ---------------------------------------------------------------------------
 
+
 class RebalanceRequest(BaseModel):
     target_agent_id: str = Field(..., min_length=1, max_length=64)
     volume_usdc: float = Field(
-        ..., gt=0,
+        ...,
+        gt=0,
         description="Gross volume to initiate at the first relay hop",
     )
     slippage_tolerance_pct: float = Field(
@@ -252,7 +262,7 @@ class RebalanceResponse(BaseModel):
     rebalanced: bool
     target_agent_id: str
     volume_usdc: float
-    relay_path: list[str]         # 3 relay agent IDs (does not include target)
+    relay_path: list[str]  # 3 relay agent IDs (does not include target)
     transactions: list[RebalanceHop]
     pre_balance_usdc: float
     post_balance_usdc: float
@@ -305,13 +315,16 @@ class ArbitrageRouteResponse(BaseModel):
     steps: list[ArbitrageStepResult]
     total_slippage_usdc: float
     expected_output_usdc: float
-    expected_output_native: float = 0.0  # output in exit_asset units; equals expected_output_usdc when exit_asset == "USDC"
+    expected_output_native: float = (
+        0.0  # output in exit_asset units; equals expected_output_usdc when exit_asset == "USDC"
+    )
     rejection_reason: str | None = None
 
 
 # ---------------------------------------------------------------------------
 # Swarm telemetry schemas
 # ---------------------------------------------------------------------------
+
 
 class SwarmDeskState(BaseModel):
     name: str
@@ -347,6 +360,7 @@ class SwarmHeartbeatRequest(BaseModel):
 # Treasury breakdown by tx_type
 # ---------------------------------------------------------------------------
 
+
 class TxTypeBreakdown(BaseModel):
     tx_type: str
     count: int
@@ -365,6 +379,7 @@ class TreasuryBreakdownResponse(BaseModel):
 # Protocol parameters
 # ---------------------------------------------------------------------------
 
+
 class ProtocolParamsResponse(BaseModel):
     tax_rate_pct: float
     tax_rate_fraction: float
@@ -381,6 +396,7 @@ class ProtocolParamsResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Path scanner (expanded non-mutating simulation)
 # ---------------------------------------------------------------------------
+
 
 class PathScanResult(BaseModel):
     path: list[str]

@@ -24,14 +24,14 @@ logger = logging.getLogger("vectrafi.settlement")
 router = APIRouter(prefix="/api/v1/settlement", tags=["settlement"])
 
 # Exact 0.1% using integer-ratio representation — no floating-point representation error.
-_TAX_NUMERATOR   = Decimal("1")
+_TAX_NUMERATOR = Decimal("1")
 _TAX_DENOMINATOR = Decimal("1000")
-_QUANTIZE_8      = Decimal("0.00000001")
+_QUANTIZE_8 = Decimal("0.00000001")
 
 # B-3: minimum transfer floor eliminates zero-tax dust-splitting; base fee
 # prevents any transfer from escaping the protocol fee entirely.
 _MIN_TRANSFER = Decimal("0.0001")
-_MIN_FEE      = Decimal("0.00000001")
+_MIN_FEE = Decimal("0.00000001")
 
 
 def _now() -> int:
@@ -53,7 +53,9 @@ def _apply_tax(amount: Decimal) -> tuple[Decimal, Decimal]:
                 f"{_MIN_TRANSFER} USDC"
             ),
         )
-    raw_tax = (amount * _TAX_NUMERATOR / _TAX_DENOMINATOR).quantize(_QUANTIZE_8, rounding=ROUND_UP)
+    raw_tax = (amount * _TAX_NUMERATOR / _TAX_DENOMINATOR).quantize(
+        _QUANTIZE_8, rounding=ROUND_UP
+    )
     tax = max(raw_tax, _MIN_FEE)
     net = amount - tax
     return tax, net
@@ -72,7 +74,9 @@ def _get_wallet_or_404(db: Session, agent_id: str) -> AgentWallet:
 def _get_or_init_treasury(db: Session) -> TreasuryState:
     treasury = db.get(TreasuryState, 1)
     if treasury is None:
-        treasury = TreasuryState(id=1, accumulated_fees_usdc=Decimal("0"), bounty_pool_fees_usdc=Decimal("0"))
+        treasury = TreasuryState(
+            id=1, accumulated_fees_usdc=Decimal("0"), bounty_pool_fees_usdc=Decimal("0")
+        )
         db.add(treasury)
     return treasury
 
@@ -103,7 +107,9 @@ def _execute_transfer(
     B-3: minimum transfer enforced by _apply_tax; ROUND_UP prevents zero-tax dust.
     """
     amount = Decimal(str(amount_usdc))
-    tax_amount, net_amount = _apply_tax(amount)  # raises HTTP 400 if below _MIN_TRANSFER
+    tax_amount, net_amount = _apply_tax(
+        amount
+    )  # raises HTTP 400 if below _MIN_TRANSFER
 
     # Lock both rows in alphabetical order to prevent deadlocks when two
     # concurrent transfers share a wallet in opposite directions.
@@ -115,10 +121,12 @@ def _execute_transfer(
             .where(AgentWallet.agent_id.in_(lock_ids))
             .with_for_update()
             .order_by(AgentWallet.agent_id)
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     }
 
-    sender   = locked.get(sender_id)
+    sender = locked.get(sender_id)
     receiver = locked.get(receiver_id)
     if sender is None or receiver is None:
         missing = sender_id if sender is None else receiver_id
@@ -137,20 +145,22 @@ def _execute_transfer(
             ),
         )
 
-    sender.balance_usdc   = sender_balance - amount
+    sender.balance_usdc = sender_balance - amount
     receiver.balance_usdc = Decimal(str(receiver.balance_usdc)) + net_amount
 
     # A-2: lock the treasury row after the wallet locks are held so the
     # fee increment is serialised across concurrent transactions (no lost update).
-    treasury = (
-        db.execute(
-            select(TreasuryState).where(TreasuryState.id == 1).with_for_update()
-        ).scalar_one_or_none()
-    )
+    treasury = db.execute(
+        select(TreasuryState).where(TreasuryState.id == 1).with_for_update()
+    ).scalar_one_or_none()
     if treasury is None:
-        treasury = TreasuryState(id=1, accumulated_fees_usdc=Decimal("0"), bounty_pool_fees_usdc=Decimal("0"))
+        treasury = TreasuryState(
+            id=1, accumulated_fees_usdc=Decimal("0"), bounty_pool_fees_usdc=Decimal("0")
+        )
         db.add(treasury)
-    treasury.accumulated_fees_usdc = Decimal(str(treasury.accumulated_fees_usdc)) + tax_amount
+    treasury.accumulated_fees_usdc = (
+        Decimal(str(treasury.accumulated_fees_usdc)) + tax_amount
+    )
 
     tx = SettlementTransaction(
         tx_id=str(uuid.uuid4()),
@@ -170,6 +180,7 @@ def _execute_transfer(
 # ---------------------------------------------------------------------------
 # POST /api/v1/settlement/transfer
 # ---------------------------------------------------------------------------
+
 
 @router.post("/transfer", response_model=SettlementTransferResponse)
 async def settlement_transfer(
@@ -192,10 +203,12 @@ async def settlement_transfer(
             detail="sender and receiver must differ",
         )
 
-    sender   = _get_wallet_or_404(db, payload.agent_id)
+    sender = _get_wallet_or_404(db, payload.agent_id)
     receiver = _get_wallet_or_404(db, payload.receiver_id)
 
-    tx = _execute_transfer(db, payload.agent_id, payload.receiver_id, payload.amount_usdc, payload.tx_type)
+    tx = _execute_transfer(
+        db, payload.agent_id, payload.receiver_id, payload.amount_usdc, payload.tx_type
+    )
 
     db.commit()
     db.refresh(sender)
@@ -218,8 +231,12 @@ async def settlement_transfer(
 
     logger.info(
         "Settlement transfer tx=%s %s->%s gross=%.8f tax=%.8f net=%.8f on_chain=%s",
-        tx.tx_id, payload.agent_id, payload.receiver_id,
-        tx.gross_amount_usdc, tx.tax_amount_usdc, tx.net_amount_usdc,
+        tx.tx_id,
+        payload.agent_id,
+        payload.receiver_id,
+        tx.gross_amount_usdc,
+        tx.tax_amount_usdc,
+        tx.net_amount_usdc,
         tx.on_chain_status,
     )
 
@@ -240,6 +257,7 @@ async def settlement_transfer(
 # ---------------------------------------------------------------------------
 # POST /api/v1/settlement/claim-bounty
 # ---------------------------------------------------------------------------
+
 
 @router.post("/claim-bounty", response_model=BountyClaimResponse)
 async def claim_bounty(
@@ -264,15 +282,21 @@ async def claim_bounty(
             detail="claimant and counterpart must differ",
         )
 
-    claimant    = _get_wallet_or_404(db, payload.agent_id)
+    claimant = _get_wallet_or_404(db, payload.agent_id)
     counterpart = _get_wallet_or_404(db, payload.counterpart_id)
 
-    bounty      = Decimal(str(payload.bounty_amount_usdc))
-    share_pct   = Decimal(str(payload.counterpart_share_pct))
+    bounty = Decimal(str(payload.bounty_amount_usdc))
+    share_pct = Decimal(str(payload.counterpart_share_pct))
     counterpart_gross = (bounty * share_pct).quantize(_QUANTIZE_8, rounding=ROUND_DOWN)
-    claimant_share    = bounty - counterpart_gross
+    claimant_share = bounty - counterpart_gross
 
-    tx = _execute_transfer(db, payload.agent_id, payload.counterpart_id, float(counterpart_gross), "bounty_yield_split")
+    tx = _execute_transfer(
+        db,
+        payload.agent_id,
+        payload.counterpart_id,
+        float(counterpart_gross),
+        "bounty_yield_split",
+    )
 
     db.commit()
     db.refresh(claimant)
@@ -282,9 +306,13 @@ async def claim_bounty(
     logger.info(
         "Bounty claim tx=%s claimant=%s counterpart=%s "
         "gross=%.8f claimant_keep=%.8f counterpart_gross=%.8f tax=%.8f",
-        tx.tx_id, payload.agent_id, payload.counterpart_id,
-        payload.bounty_amount_usdc, claimant_share,
-        counterpart_gross, tx.tax_amount_usdc,
+        tx.tx_id,
+        payload.agent_id,
+        payload.counterpart_id,
+        payload.bounty_amount_usdc,
+        claimant_share,
+        counterpart_gross,
+        tx.tax_amount_usdc,
     )
 
     return BountyClaimResponse(
@@ -306,6 +334,7 @@ async def claim_bounty(
 # GET /api/v1/settlement/analytics
 # ---------------------------------------------------------------------------
 
+
 @router.get("/analytics", response_model=TreasuryAnalyticsResponse)
 def settlement_analytics(db: Session = Depends(get_db)) -> TreasuryAnalyticsResponse:
     """
@@ -319,8 +348,10 @@ def settlement_analytics(db: Session = Depends(get_db)) -> TreasuryAnalyticsResp
     """
     treasury = _get_or_init_treasury(db)
 
-    tx_count     = db.query(func.count(SettlementTransaction.tx_id)).scalar() or 0
-    total_volume = db.query(func.sum(SettlementTransaction.gross_amount_usdc)).scalar() or Decimal("0")
+    tx_count = db.query(func.count(SettlementTransaction.tx_id)).scalar() or 0
+    total_volume = db.query(
+        func.sum(SettlementTransaction.gross_amount_usdc)
+    ).scalar() or Decimal("0")
     wallet_count = db.query(func.count(AgentWallet.agent_id)).scalar() or 0
 
     return TreasuryAnalyticsResponse(

@@ -36,7 +36,9 @@ router = APIRouter(prefix="/api/v1/bank", tags=["bank"])
 
 
 @router.post("/deposit", response_model=DepositResponse)
-async def deposit_to_vault(request: Request, db: Session = Depends(get_db)) -> DepositResponse:
+async def deposit_to_vault(
+    request: Request, db: Session = Depends(get_db)
+) -> DepositResponse:
     payload = await verify_signed_payload(request, db, DepositRequest)
 
     wallet = db.get(AgentWallet, payload.agent_id)
@@ -71,8 +73,8 @@ async def deposit_to_vault(request: Request, db: Session = Depends(get_db)) -> D
         )
 
     _q8 = Decimal("0.00000001")
-    amount        = Decimal(str(payload.amount_usdc))
-    wallet_bal    = Decimal(str(wallet.balance_usdc))
+    amount = Decimal(str(payload.amount_usdc))
+    wallet_bal = Decimal(str(wallet.balance_usdc))
 
     if wallet_bal < amount:
         raise HTTPException(
@@ -81,21 +83,35 @@ async def deposit_to_vault(request: Request, db: Session = Depends(get_db)) -> D
         )
 
     # F-03: exact Decimal fee arithmetic with floor-rounding (mirrors sandbox integer math)
-    protocol_fee  = (amount * Decimal(str(PROTOCOL_FEE_RATE))).quantize(_q8, rounding=ROUND_DOWN)
-    creator_fee   = (protocol_fee * Decimal(str(FEE_SPLIT_CREATOR_RATE))).quantize(_q8, rounding=ROUND_DOWN)
-    bounty_fee    = (protocol_fee * Decimal(str(FEE_SPLIT_BOUNTY_RATE))).quantize(_q8, rounding=ROUND_DOWN)
+    protocol_fee = (amount * Decimal(str(PROTOCOL_FEE_RATE))).quantize(
+        _q8, rounding=ROUND_DOWN
+    )
+    creator_fee = (protocol_fee * Decimal(str(FEE_SPLIT_CREATOR_RATE))).quantize(
+        _q8, rounding=ROUND_DOWN
+    )
+    bounty_fee = (protocol_fee * Decimal(str(FEE_SPLIT_BOUNTY_RATE))).quantize(
+        _q8, rounding=ROUND_DOWN
+    )
     net_deposited = amount - protocol_fee
 
-    wallet.balance_usdc         = wallet_bal - amount
-    wallet.staked_yield_balance = Decimal(str(wallet.staked_yield_balance)) + net_deposited
+    wallet.balance_usdc = wallet_bal - amount
+    wallet.staked_yield_balance = (
+        Decimal(str(wallet.staked_yield_balance)) + net_deposited
+    )
 
     treasury = db.get(TreasuryState, 1)
     if treasury is None:
-        treasury = TreasuryState(id=1, accumulated_fees_usdc=Decimal("0"), bounty_pool_fees_usdc=Decimal("0"))
+        treasury = TreasuryState(
+            id=1, accumulated_fees_usdc=Decimal("0"), bounty_pool_fees_usdc=Decimal("0")
+        )
         db.add(treasury)
 
-    treasury.accumulated_fees_usdc = Decimal(str(treasury.accumulated_fees_usdc)) + creator_fee
-    treasury.bounty_pool_fees_usdc = Decimal(str(treasury.bounty_pool_fees_usdc)) + bounty_fee
+    treasury.accumulated_fees_usdc = (
+        Decimal(str(treasury.accumulated_fees_usdc)) + creator_fee
+    )
+    treasury.bounty_pool_fees_usdc = (
+        Decimal(str(treasury.bounty_pool_fees_usdc)) + bounty_fee
+    )
     # TODO (faba-agent-bounty): issue #3 — add on-chain routing call here when HOLDING_ADDRESS_BOUNTY
     # is a real deployed contract. Currently accumulates in SQLite ledger only.
 
