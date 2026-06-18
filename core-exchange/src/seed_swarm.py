@@ -52,6 +52,22 @@ from config import DEFAULT_USDC_BALANCE, PROTOCOL_DOMAIN
 from services.web3_provider import get_on_chain_eth_balance, is_live_mode
 
 # ---------------------------------------------------------------------------
+# HD Wallet derivation (BIP-44, coin type 60 — Ethereum)
+# ---------------------------------------------------------------------------
+_SWARM_SEED_PHRASE: str | None = os.getenv("SWARM_SEED_PHRASE") or None
+
+# Standard BIP-44 Ethereum paths, one per desk.
+_DESK_HD_PATHS: dict[str, str] = {
+    "Alpha": "m/44'/60'/0'/0/0",
+    "Beta":  "m/44'/60'/0'/0/1",
+    "Gamma": "m/44'/60'/0'/0/2",
+}
+
+if _SWARM_SEED_PHRASE:
+    # Gated behind an explicit opt-in as required by the eth-account library.
+    Account.enable_unaudited_hdwallet_features()
+
+# ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 _API_BASE    = (
@@ -163,36 +179,62 @@ def _signed_body(body: dict, private_key: str) -> tuple[bytes, str]:
 # ---------------------------------------------------------------------------
 
 async def _provision_desk(
-    client:  httpx.AsyncClient,
-    name:    str,
-    swarm_id: str,
+    client:          httpx.AsyncClient,
+    name:            str,
+    swarm_id:        str,
+    derived_address: str | None = None,
+    derived_key:     str | None = None,
 ) -> DeskState | None:
-    agent_id = f"swarm_{name}_{swarm_id}"
+    agent_id   = f"swarm_{name}_{swarm_id}"
+    create_body: dict = {"agent_id": agent_id}
+    if derived_address is not None:
+        create_body["wallet_address"] = derived_address
+
     try:
         resp = await client.post(
             f"{_API_BASE}/api/v1/wallet/create",
-            json={"agent_id": agent_id},
+            json=create_body,
         )
     except Exception as exc:
         log.error("PROVISION  %-12s  FAILED: %s", name, exc)
         return None
 
     if resp.status_code in (200, 201):
-        d = resp.json()
-        log.info(
-            "PROVISION  %-12s  agent_id=%-34s  balance=%.2f USDC",
-            name, agent_id, d["balance_usdc"],
-        )
+        d           = resp.json()
+        # Use derived values when available; fall back to what the server generated.
+        wallet_addr = derived_address if derived_address is not None else d["wallet_address"]
+        private_key = derived_key     if derived_key     is not None else d["private_key"]
         initial_bal = float(d["balance_usdc"])
+        log.info(
+            "PROVISION  %-12s  agent_id=%-34s  address=%s  balance=%.2f USDC%s",
+            name, agent_id, wallet_addr, initial_bal,
+            "  [HD]" if derived_key is not None else "",
+        )
         return DeskState(
             name=name,
             agent_id=d["agent_id"],
-            wallet_address=d["wallet_address"],
-            private_key=d["private_key"],
+            wallet_address=wallet_addr,
+            private_key=private_key,
             balance_usdc=initial_bal,
             initial_balance_usdc=initial_bal,
         )
     elif resp.status_code == 409:
+        if derived_key is not None:
+            # HD mode: wallet already registered from a previous run — reconstruct
+            # from the derived key.  Balance is unknown until the first transfer
+            # response updates it; set to DEFAULT so the swarm loop can start.
+            log.info(
+                "PROVISION  %-12s  409 (HD reuse) — reconstructing from derived key  address=%s",
+                name, derived_address,
+            )
+            return DeskState(
+                name=name,
+                agent_id=agent_id,
+                wallet_address=derived_address or "",
+                private_key=derived_key,
+                balance_usdc=DEFAULT_USDC_BALANCE,
+                initial_balance_usdc=DEFAULT_USDC_BALANCE,
+            )
         log.warning("PROVISION  %-12s  409 already exists — cannot retrieve key, skipping", name)
         return None
     else:
@@ -201,9 +243,21 @@ async def _provision_desk(
 
 
 async def provision_desks(client: httpx.AsyncClient, swarm_id: str) -> list[DeskState]:
-    tasks   = [_provision_desk(client, name, swarm_id) for name in _DESK_NAMES]
+    tasks: list = []
+    for name in _DESK_NAMES:
+        derived_address: str | None = None
+        derived_key:     str | None = None
+        if _SWARM_SEED_PHRASE:
+            acct            = Account.from_mnemonic(
+                _SWARM_SEED_PHRASE, account_path=_DESK_HD_PATHS[name]
+            )
+            derived_address = acct.address
+            raw_key         = acct.key.hex()
+            derived_key     = raw_key if raw_key.startswith("0x") else f"0x{raw_key}"
+        tasks.append(_provision_desk(client, name, swarm_id, derived_address, derived_key))
+
     results = await asyncio.gather(*tasks, return_exceptions=True)
-    desks   = []
+    desks: list[DeskState] = []
     for r in results:
         if isinstance(r, BaseException):
             log.error("PROVISION  Unhandled exception: %s", r)
@@ -547,13 +601,20 @@ async def swarm_loop(desks: list[DeskState]) -> None:
 # ---------------------------------------------------------------------------
 
 async def main() -> None:
-    swarm_id = uuid.uuid4().hex[:6]
+    # In HD mode, agent IDs must be stable across runs so the existing wallets
+    # are reused (409 → reconstruct from derived key).  Random ID is fine for
+    # ephemeral sandbox runs where wallet recovery is not required.
+    swarm_id = "hd" if _SWARM_SEED_PHRASE else uuid.uuid4().hex[:6]
 
     log.info("=" * 68)
     log.info("  VectraFi Seed Swarm")
     log.info("  swarm_id=%-8s  target=%s  log=%s", swarm_id, _API_BASE, _LOG_FILE)
     log.info("=" * 68)
 
+    if _SWARM_SEED_PHRASE:
+        log.info("  HD wallet mode — deterministic BIP-44 keys from SWARM_SEED_PHRASE")
+        log.info("  Desk paths: Alpha=%s  Beta=%s  Gamma=%s",
+                 _DESK_HD_PATHS["Alpha"], _DESK_HD_PATHS["Beta"], _DESK_HD_PATHS["Gamma"])
     if _DRY_RUN:
         log.info("  DRY-RUN mode active — transfers will be skipped")
 

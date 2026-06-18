@@ -27,14 +27,28 @@ def create_wallet(payload: WalletCreateRequest, db: Session = Depends(get_db)) -
             detail=f"Wallet already exists for agent_id '{payload.agent_id}'",
         )
 
-    account = Account.create()
-    private_key = account.key.hex()
-    if not private_key.startswith("0x"):
-        private_key = f"0x{private_key}"
+    if payload.wallet_address is not None:
+        # HD wallet flow: caller derived the keypair; server registers the address only.
+        wallet_address = payload.wallet_address
+        private_key    = ""
+        logger.info(
+            "Registering client-derived wallet for agent=%s address=%s (server holds no key)",
+            payload.agent_id, wallet_address,
+        )
+    else:
+        account = Account.create()
+        private_key = account.key.hex()
+        if not private_key.startswith("0x"):
+            private_key = f"0x{private_key}"
+        wallet_address = account.address
+        logger.info(
+            "Created cryptographic wallet for agent=%s address=%s (private key not persisted)",
+            payload.agent_id, wallet_address,
+        )
 
     wallet = AgentWallet(
         agent_id=payload.agent_id,
-        wallet_address=account.address,
+        wallet_address=wallet_address,
         balance_usdc=DEFAULT_USDC_BALANCE,
         balance_hbar=DEFAULT_HBAR_BALANCE,
         staked_yield_balance=0.0,
@@ -42,13 +56,6 @@ def create_wallet(payload: WalletCreateRequest, db: Session = Depends(get_db)) -
     db.add(wallet)
     db.commit()
     db.refresh(wallet)
-
-    logger.info(
-        "Created cryptographic wallet for agent=%s address=%s usdc=%.2f (private key not persisted)",
-        wallet.agent_id,
-        wallet.wallet_address,
-        wallet.balance_usdc,
-    )
 
     return WalletCreateResponse(
         agent_id=wallet.agent_id,

@@ -14,16 +14,33 @@ class MarketPricesResponse(BaseModel):
 
 class WalletCreateRequest(BaseModel):
     agent_id: str = Field(..., min_length=1, max_length=64)
+    wallet_address: str | None = Field(
+        default=None,
+        description=(
+            "Optional pre-derived Ethereum address (HD wallet flow). "
+            "When supplied, the server registers this address as-is and does not "
+            "generate a keypair — the caller holds the private key."
+        ),
+    )
+
+    @field_validator("wallet_address")
+    @classmethod
+    def _validate_wallet_address(cls, v: str | None) -> str | None:
+        if v is not None and not re.fullmatch(r"0x[0-9a-fA-F]{40}", v):
+            raise ValueError("wallet_address must be 0x + 40 hex chars")
+        return v
 
 
 class WalletCreateResponse(BaseModel):
     agent_id: str
     wallet_address: str
     private_key: str = Field(
-        ...,
+        default="",
         description=(
             "Ethereum private key generated at wallet creation. "
-            "The exchange never stores this value — it is returned once and must be "
+            "Empty string when the address was client-provided (HD wallet flow) — "
+            "the server never held the key. "
+            "The exchange never stores this value; it is returned once and must be "
             "held securely by the agent in local memory or encrypted storage."
         ),
     )
