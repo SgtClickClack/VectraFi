@@ -547,6 +547,20 @@ async def swarm_loop(desks: list[DeskState]) -> None:
         f"{d.name}={d.agent_id}" for d in desks
     ))
 
+    # Mandatory preflight gas check — must pass before the first transfer can fire.
+    # Mirrors the in-loop guard so any RPC or unexpected error halts cleanly.
+    try:
+        await _check_gas_guard(desks)
+    except CircuitBreakerTripped:
+        raise
+    except Exception as exc:
+        log.critical(
+            "GAS-GUARD  preflight unexpected error — treating as emergency halt: %s", exc
+        )
+        raise CircuitBreakerTripped(
+            f"gas guard preflight raised unexpectedly: {exc}"
+        ) from exc
+
     async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
         while True:
             loop_start = time.perf_counter()
