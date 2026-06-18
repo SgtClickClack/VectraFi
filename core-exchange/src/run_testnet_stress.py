@@ -18,7 +18,9 @@ Usage (exchange server must be running):
     python core-exchange/src/run_testnet_stress.py # terminal B
 
 Environment overrides:
-    STRESS_API_BASE   — default http://127.0.0.1:8000
+    VECTRAFI_API_URL  — canonical API base; shared with seed_swarm.py
+    STRESS_API_BASE   — overrides VECTRAFI_API_URL for this script only (legacy compat)
+                        default http://127.0.0.1:8000
     L2_PROVIDER_URL   — when set, on-chain settlement activates;
                         hashes are emitted as Basescan explorer URLs.
 """
@@ -52,7 +54,11 @@ from recovery_worker import run_recovery
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-_API_BASE      = os.getenv("STRESS_API_BASE", "http://127.0.0.1:8000").rstrip("/")
+_API_BASE      = (
+    os.getenv("STRESS_API_BASE")
+    or os.getenv("VECTRAFI_API_URL")
+    or "http://127.0.0.1:8000"
+).rstrip("/")
 _EXPLORER_TX   = "https://sepolia.basescan.org/tx/{hash}"
 _HTTP_TIMEOUT  = httpx.Timeout(connect=5.0, read=30.0, write=5.0, pool=5.0)
 _BATCH_SIZE    = 5
