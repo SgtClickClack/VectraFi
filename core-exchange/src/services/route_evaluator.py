@@ -4,8 +4,8 @@ Cognitive Token Cost Throttling — lean programmatic route evaluator.
 Every HTTP call the swarm makes to /api/v1/arbitrage/route-path or
 /api/v1/arbitrage/rebalance carries fixed overhead: network round-trip,
 FastAPI middleware, SQLAlchemy session setup, JSON serialisation, and
-response deserialisation.  On Base L2 a 10 USDC transfer at 1.5% yields
-only 0.15 USDC tax.  If the API call costs more CPU/time than that margin
+response deserialisation.  On Base L2 a 10 USDC transfer at 0.1% yields
+only 0.01 USDC tax.  If the API call costs more CPU/time than that margin
 recovers, the swarm operates at a net loss.
 
 This module replaces those round-trips with O(n) pure-Python evaluations
@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 # These are intentionally not imported from those modules to keep this module
 # free of heavy transitive imports (web3, SQLAlchemy, FastAPI) during tests.
 _GAS_COST_PER_HOP_USDC: float = 0.05   # static L2 gas friction per leg
-_TAX_FRACTION:          float = 0.015  # 1.5% platform tax
+_TAX_FRACTION:          float = 0.001  # 0.1% platform tax
 
 
 # ---------------------------------------------------------------------------
@@ -218,7 +218,7 @@ def tax_covers_overhead(
     tax_fraction: float = _TAX_FRACTION,
 ) -> bool:
     """
-    Return True when the 1.5% protocol tax collected on a transfer exceeds
+    Return True when the 0.1% protocol tax collected on a transfer exceeds
     the estimated compute/network overhead cost of executing it.
 
     This is the mathematical guarantee required by the throttling goal:
@@ -229,7 +229,7 @@ def tax_covers_overhead(
         estimated_overhead_usdc: Estimated total overhead cost of this
                                  transfer (API calls, gas monitoring, etc.)
                                  expressed in USDC-equivalent cost units.
-        tax_fraction:           Protocol tax rate (default 1.5% = 0.015).
+        tax_fraction:           Protocol tax rate (default 0.1% = 0.001).
 
     Returns:
         True  → proceed; tax covers overhead.

@@ -5,7 +5,7 @@ Coverage matrix:
   1.  Happy path — viable 3-hop rebalance executes cleanly.
   2.  Target balance is restored above safety floor after execution.
   3.  Exactly 3 SettlementTransaction rows are created.
-  4.  1.5% protocol tax is deducted on every hop.
+  4.  0.1% protocol tax is deducted on every hop.
   5.  Hop amounts cascade (gross of hop n = net of hop n−1).
   6.  relay_0 loses the full gross volume from its balance.
   7.  relay_1 and relay_2 have net zero balance change (pass-through nodes).
@@ -131,7 +131,7 @@ def test_rebalance_target_balance_restored_above_floor(client):
     d = resp.json()
 
     assert d["rebalanced"] is True
-    # target receives volume * 0.985^3 ≈ 95.57 USDC — well above 0.5 floor
+    # target receives volume * 0.999^3 ≈ 99.7 USDC — well above 0.5 floor
     assert d["post_balance_usdc"] > floor
     assert d["post_balance_usdc"] > d["pre_balance_usdc"]
 
@@ -156,7 +156,7 @@ def test_rebalance_creates_exactly_3_transactions(client):
 
 
 # ---------------------------------------------------------------------------
-# 4. 1.5% protocol tax deducted on every hop
+# 4. 0.1% protocol tax deducted on every hop
 # ---------------------------------------------------------------------------
 
 def test_rebalance_tax_per_hop(client):
@@ -170,9 +170,9 @@ def test_rebalance_tax_per_hop(client):
     d = resp.json()
 
     for hop in d["transactions"]:
-        expected_tax = pytest.approx(hop["gross_amount_usdc"] * 0.015, rel=1e-5)
+        expected_tax = pytest.approx(hop["gross_amount_usdc"] * 0.001, rel=1e-5)
         assert hop["tax_amount_usdc"] == expected_tax, (
-            f"hop {hop['hop']}: expected tax={hop['gross_amount_usdc'] * 0.015:.8f} "
+            f"hop {hop['hop']}: expected tax={hop['gross_amount_usdc'] * 0.001:.8f} "
             f"got {hop['tax_amount_usdc']:.8f}"
         )
         assert hop["net_amount_usdc"] == pytest.approx(
