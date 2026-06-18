@@ -89,7 +89,15 @@
     "protocol_fee_rate": 0.0025,
     "description": "0.25% of gross deposit amount, split on every vault deposit. Swaps carry zero fee.",
     "swap_fee_status": "ZERO — swaps between USDC and HBAR are permanently fee-free in this protocol version",
-    "alpha_phase_notice": "HOLDING_ADDRESS_USER and HOLDING_ADDRESS_BOUNTY are STANDALONE SANDBOX PLACEHOLDERS (effective burn addresses). All fees accumulate in SQLite TreasuryState only during alpha. No on-chain distribution occurs until an L2 governance proposal is ratified.",
+    "settlement_toll": {
+      "standard_rate_pct": 0.1,
+      "preferential_rate_pct": 0.05,
+      "preferential_eligible_claim_types": ["corridor_provisioning", "liquidity_allocation"],
+      "eligibility": "Agent must hold a NegotiationClaim with status=granted for an eligible intent type. Submit via POST /api/v1/protocol/negotiate-intent, then evaluate via POST /api/v1/protocol/negotiations/{negotiation_id}/evaluate.",
+      "discovery": "GET /api/v1/protocol/negotiations?agent_id=<id> — check for a granted claim. GET /api/v1/protocol/params — read preferential_toll_rate_pct field.",
+      "toll_rate_in_response": "Every POST /api/v1/settlement/transfer response includes toll_rate_applied_pct showing the actual rate charged."
+    },
+    "alpha_phase_notice": "SETTLEMENT TOLL (0.1% / 0.05%): In live RPC mode (L2_PROVIDER_URL, PROTOCOL_PRIVATE_KEY, USDC_CONTRACT_ADDRESS, and PLATFORM_TREASURY_ADDRESS all set), each territory toll is forwarded on-chain to PLATFORM_TREASURY_ADDRESS on Base L2 as a USDC ERC-20 transfer after the SQLite ledger commits. In sandbox mode (any env var unset), tolls accumulate in SQLite TreasuryState only — no RPC calls are made. DEPOSIT FEES: HOLDING_ADDRESS_USER and HOLDING_ADDRESS_BOUNTY remain STANDALONE SANDBOX PLACEHOLDERS (effective burn addresses); deposit fee on-chain distribution requires a separate L2 governance proposal.",
     "split": {
       "creator": {
         "share": 0.80,
@@ -123,19 +131,26 @@
     },
     "live_rpc": {
       "trigger": "valid Ethereum JSON-RPC URL in RPC_PROVIDER_URL",
-      "behaviour": "on-chain ETH balance checks + unsigned transaction payload preparation",
+      "behaviour": "on-chain ETH balance checks + unsigned transaction payload preparation + L2 USDC settlement toll forwarding (when L2_PROVIDER_URL, PROTOCOL_PRIVATE_KEY, USDC_CONTRACT_ADDRESS, PLATFORM_TREASURY_ADDRESS are set)",
       "latency": "network-dependent",
-      "note": "SQLite ledger still tracks agent balances in both modes"
+      "note": "SQLite ledger still tracks agent balances in both modes; on-chain settlement is dispatched as a best-effort background task after each toll collection"
     }
   },
 
   "agent_onboarding": {
-    "step_1": "POST /api/v1/wallet/create with a unique agent_id",
+    "journey_tracker": "GET /api/v1/onboard/journey?agent_id={agent_id} — machine-readable progress tracker; returns citizen_status, completed steps, and next_endpoint to call. Poll freely, no auth required.",
+    "step_1": "POST /api/v1/wallet/create with a unique agent_id — receive wallet_address and private_key (stored by you, never by the protocol)",
     "step_2": "Store wallet_address and private_key securely — private_key never retrievable again",
-    "step_3": "GET /api/v1/market/prices — check source field before sizing trades",
-    "step_4": "Sign request body with private_key using EIP-191 personal-sign",
-    "step_5": "POST /api/v1/trade/swap or /api/v1/bank/deposit with X-VectraFi-Signature header",
-    "step_6": "Inspect execution_mode in response — sandbox vs live_rpc affects latency and gas"
+    "step_3": "POST /api/v1/settlement/transfer — execute your first signed USDC transfer to activate citizen status (0.1% territory toll)",
+    "step_4": "POST /api/v1/protocol/negotiate-intent with intent_type=corridor_provisioning or liquidity_allocation — no auth required",
+    "step_5": "POST /api/v1/protocol/negotiations/{negotiation_id}/evaluate — trigger evaluation; auto-grants treaty intents immediately",
+    "step_6": "With a granted claim, all subsequent /api/v1/settlement/transfer calls charge 0.05% toll — verify via toll_rate_applied_pct in response",
+    "citizen_status_values": {
+      "unknown": "No wallet registered — start at step_1",
+      "wallet_only": "Wallet exists, no transfers or corridor claims yet",
+      "active": "Has made at least one transfer or submitted a negotiation claim",
+      "corridor_provisioner": "Holds a granted corridor_provisioning or liquidity_allocation claim; preferential toll active"
+    }
   },
 
   "contribution": {

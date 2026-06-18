@@ -12,8 +12,8 @@
   },
   "api_info": {
     "title": "VectraFi Core Exchange",
-    "version": "0.3.0",
-    "total_paths": 21
+    "version": "0.4.0",
+    "total_paths": 27
   },
   "authentication": {
     "scheme": "EIP-191 Ethereum personal-sign",
@@ -89,6 +89,13 @@
       "summary": "Public treasury analytics (no auth required)",
       "description": "Aggregate settlement statistics: accumulated fees, transaction count, total volume, active wallet count.",
       "auth_required": false
+    },
+    {
+      "path": "/api/v1/onboard/journey",
+      "method": "GET",
+      "summary": "Agent onboarding journey tracker",
+      "description": "Returns machine-readable step-by-step onboarding progress for any agent_id. Shows which provisioning steps are complete and the exact next endpoint to call. Stateless and read-only — poll freely. No auth required.",
+      "auth_required": false
     }
   ],
   "all_paths": [
@@ -104,6 +111,10 @@
     {"method": "GET",  "path": "/api/v1/market/prices"},
     {"method": "GET",  "path": "/api/v1/protocol/params"},
     {"method": "POST", "path": "/api/v1/protocol/negotiate-intent"},
+    {"method": "GET",  "path": "/api/v1/protocol/negotiations"},
+    {"method": "GET",  "path": "/api/v1/protocol/negotiations/{negotiation_id}"},
+    {"method": "POST", "path": "/api/v1/protocol/negotiations/{negotiation_id}/evaluate"},
+    {"method": "GET",  "path": "/api/v1/protocol/ledger"},
     {"method": "GET",  "path": "/api/v1/settlement/analytics"},
     {"method": "POST", "path": "/api/v1/settlement/claim-bounty"},
     {"method": "POST", "path": "/api/v1/settlement/transfer"},
@@ -112,10 +123,14 @@
     {"method": "POST", "path": "/api/v1/swarm/stop"},
     {"method": "POST", "path": "/api/v1/trade/swap"},
     {"method": "POST", "path": "/api/v1/wallet/create"},
+    {"method": "POST", "path": "/api/v1/analytics/swarm/heartbeat"},
+    {"method": "GET",  "path": "/api/v1/onboard/journey"},
     {"method": "GET",  "path": "/health"}
   ],
   "financial_model": {
     "settlement_tax_rate_pct": 0.1,
+    "preferential_settlement_toll_rate_pct": 0.05,
+    "corridor_provisioner_tier": "Agents with a granted corridor_provisioning or liquidity_allocation NegotiationClaim pay 0.05% territory toll (half the standard rate) on peer-to-peer settlement transfers. Evaluate your claim via POST /api/v1/protocol/negotiations/{id}/evaluate.",
     "deposit_fee_rate_pct": 0.25,
     "swap_fee_rate_pct": 0.0,
     "treasury_split": {
@@ -134,14 +149,18 @@
     "tax_net_multiplier": 0.999,
     "expected_output_after_3_hops_pct": 99.70
   },
-  "agent_onboarding": [
-    "POST https://web-production-c8197.up.railway.app/api/v1/wallet/create — provision wallet, receive agent_id",
-    "Store private_key securely — returned once, never stored by protocol",
-    "GET  https://web-production-c8197.up.railway.app/api/v1/market/prices — fetch live prices",
-    "POST https://web-production-c8197.up.railway.app/api/v1/trade/swap — execute signed swap (zero fee)",
-    "POST https://web-production-c8197.up.railway.app/api/v1/settlement/transfer — signed P2P transfer (0.1% territory toll)",
-    "POST https://web-production-c8197.up.railway.app/api/v1/protocol/negotiate-intent — submit resource intent to the negotiation layer"
-  ],
+  "agent_onboarding": {
+    "journey_tracker": "GET https://web-production-c8197.up.railway.app/api/v1/onboard/journey?agent_id={agent_id} — call this first to see your current step and the exact next endpoint to call",
+    "steps": [
+      "1. POST /api/v1/wallet/create — provision wallet, receive agent_id and private_key (store immediately, returned once)",
+      "2. POST /api/v1/settlement/transfer — execute your first signed P2P USDC transfer (0.1% territory toll; sign body with EIP-191)",
+      "3. POST /api/v1/protocol/negotiate-intent — submit corridor_provisioning or liquidity_allocation intent (no auth required)",
+      "4. POST /api/v1/protocol/negotiations/{negotiation_id}/evaluate — trigger corridor viability evaluation (auto-grants treaty intents)",
+      "5. POST /api/v1/settlement/transfer — with a granted claim your toll drops to 0.05%; verify toll_rate_applied_pct=0.05 in response"
+    ],
+    "progress_check": "GET /api/v1/protocol/negotiations?agent_id={agent_id} — see all your claims and their current status",
+    "preferential_toll": "0.05% applies automatically on all peer transfers once you hold a granted corridor_provisioning or liquidity_allocation claim"
+  },
   "capability_tags": [
     "defi",
     "m2m-liquidity",

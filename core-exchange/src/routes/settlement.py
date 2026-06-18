@@ -3,14 +3,14 @@ import time
 import uuid
 from decimal import ROUND_DOWN, ROUND_UP, Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from sqlalchemy import func, select
 
-from database import get_db
-from models import AgentWallet, SettlementTransaction, TreasuryState
-from routes.auth import verify_signed_payload
+from database import SessionLocal, get_db
+from models import AgentWallet, NegotiationClaim, SettlementTransaction, TreasuryState
+from routes.auth import SignedBody, get_signed_body, verify_signed_payload_from_bytes
 from schemas import (
     BountyClaimRequest,
     BountyClaimResponse,
@@ -26,6 +26,14 @@ router = APIRouter(prefix="/api/v1/settlement", tags=["settlement"])
 # Exact 0.1% using integer-ratio representation — no floating-point representation error.
 _TAX_NUMERATOR   = Decimal("1")
 _TAX_DENOMINATOR = Decimal("1000")
+
+# Preferential 0.05% rate (half standard) for agents holding a granted
+# corridor_provisioning or liquidity_allocation NegotiationClaim.
+_PREFERENTIAL_TAX_NUMERATOR   = Decimal("1")
+_PREFERENTIAL_TAX_DENOMINATOR = Decimal("2000")
+
+# Intent types that unlock the preferential rate when status == "granted".
+_CORRIDOR_PROVISIONER_INTENTS = frozenset({"corridor_provisioning", "liquidity_allocation"})
 _QUANTIZE_8      = Decimal("0.00000001")
 
 # B-3: minimum transfer floor eliminates zero-tax dust-splitting; base fee
@@ -38,12 +46,20 @@ def _now() -> int:
     return int(time.time())
 
 
-def _apply_tax(amount: Decimal) -> tuple[Decimal, Decimal]:
+def _apply_tax(
+    amount: Decimal,
+    *,
+    numerator: Decimal = _TAX_NUMERATOR,
+    denominator: Decimal = _TAX_DENOMINATOR,
+) -> tuple[Decimal, Decimal]:
     """Return (tax, net) at 8dp, ROUND_UP — protocol-favorable, neutralises dust evasion.
 
     B-1: raises HTTP 400 for amounts below _MIN_TRANSFER (eliminates zero-tax dust regime).
     B-2: ROUND_UP ensures every transfer above the floor pays at least 1 unit of tax.
     B-3: max(raw_tax, _MIN_FEE) is a defensive floor for any residual edge case.
+
+    numerator/denominator: caller-supplied rate override for preferential toll tiers.
+    Defaults to the standard 0.1% (1/1000); corridor provisioners receive 0.05% (1/2000).
     """
     if amount < _MIN_TRANSFER:
         raise HTTPException(
@@ -53,10 +69,36 @@ def _apply_tax(amount: Decimal) -> tuple[Decimal, Decimal]:
                 f"{_MIN_TRANSFER} USDC"
             ),
         )
-    raw_tax = (amount * _TAX_NUMERATOR / _TAX_DENOMINATOR).quantize(_QUANTIZE_8, rounding=ROUND_UP)
+    raw_tax = (amount * numerator / denominator).quantize(_QUANTIZE_8, rounding=ROUND_UP)
     tax = max(raw_tax, _MIN_FEE)
     net = amount - tax
     return tax, net
+
+
+def _get_agent_toll_rate(db: Session, agent_id: str) -> tuple[Decimal, Decimal]:
+    """Return (numerator, denominator) for the applicable territory toll rate.
+
+    Agents with a granted corridor_provisioning or liquidity_allocation NegotiationClaim
+    pay the preferential rate (0.05%).  All others pay the standard rate (0.1%).
+    The lookup is a single indexed read on agent_id — no row lock required.
+    """
+    granted = db.execute(
+        select(NegotiationClaim)
+        .where(
+            NegotiationClaim.agent_id == agent_id,
+            NegotiationClaim.status == "granted",
+            NegotiationClaim.intent_type.in_(list(_CORRIDOR_PROVISIONER_INTENTS)),
+        )
+        .limit(1)
+    ).scalar_one_or_none()
+
+    if granted is not None:
+        logger.debug(
+            "Preferential toll applied: agent=%s claim=%s intent=%s",
+            agent_id, granted.negotiation_id, granted.intent_type,
+        )
+        return _PREFERENTIAL_TAX_NUMERATOR, _PREFERENTIAL_TAX_DENOMINATOR
+    return _TAX_NUMERATOR, _TAX_DENOMINATOR
 
 
 def _get_wallet_or_404(db: Session, agent_id: str) -> AgentWallet:
@@ -83,6 +125,9 @@ def _execute_transfer(
     receiver_id: str,
     amount_usdc: float,
     tx_type: str,
+    *,
+    tax_numerator: Decimal = _TAX_NUMERATOR,
+    tax_denominator: Decimal = _TAX_DENOMINATOR,
 ) -> SettlementTransaction:
     """
     Core transfer primitive — called inside an open SQLAlchemy session.
@@ -103,7 +148,7 @@ def _execute_transfer(
     B-3: minimum transfer enforced by _apply_tax; ROUND_UP prevents zero-tax dust.
     """
     amount = Decimal(str(amount_usdc))
-    tax_amount, net_amount = _apply_tax(amount)  # raises HTTP 400 if below _MIN_TRANSFER
+    tax_amount, net_amount = _apply_tax(amount, numerator=tax_numerator, denominator=tax_denominator)
 
     # Lock both rows in alphabetical order to prevent deadlocks when two
     # concurrent transfers share a wallet in opposite directions.
@@ -168,12 +213,53 @@ def _execute_transfer(
 
 
 # ---------------------------------------------------------------------------
+# Background on-chain settlement helper (runs after response is sent)
+# ---------------------------------------------------------------------------
+
+async def _settle_onchain_background(
+    tx_id: str,
+    sender_wallet: str,
+    receiver_wallet: str,
+    gross_amount: Decimal,
+    tax_amount: Decimal,
+) -> None:
+    """Attempt on-chain settlement after the DB commit is already done.
+
+    Runs as a FastAPI BackgroundTask so the sync route handler is not blocked
+    by an async web3 call (S-1 fix). Uses a fresh DB session because the
+    request-scoped session will be closed by the time this runs.
+    """
+    try:
+        onchain = await _w3_bridge.process_onchain_settlement(
+            sender_wallet=sender_wallet,
+            receiver_wallet=receiver_wallet,
+            gross_amount=gross_amount,
+            tax_amount=tax_amount,
+        )
+    except Exception as exc:
+        logger.error("on-chain settlement background failed tx=%s: %s", tx_id, exc)
+        return
+    with SessionLocal() as bg_db:
+        tx = bg_db.get(SettlementTransaction, tx_id)
+        if tx is not None:
+            tx.on_chain_status = onchain.status
+            tx.on_chain_net_tx_hash = onchain.net_tx_hash
+            tx.on_chain_tax_tx_hash = onchain.tax_tx_hash
+            bg_db.commit()
+            logger.info(
+                "on-chain settlement recorded tx=%s status=%s",
+                tx_id, onchain.status,
+            )
+
+
+# ---------------------------------------------------------------------------
 # POST /api/v1/settlement/transfer
 # ---------------------------------------------------------------------------
 
 @router.post("/transfer", response_model=SettlementTransferResponse)
-async def settlement_transfer(
-    request: Request,
+def settlement_transfer(
+    background_tasks: BackgroundTasks,
+    signed_body: SignedBody = Depends(get_signed_body),
     db: Session = Depends(get_db),
 ) -> SettlementTransferResponse:
     """
@@ -183,8 +269,14 @@ async def settlement_transfer(
           Payload must include nonce, issued_at, and chain_id for replay protection.
     Tax:  0.1% of gross_amount deducted and routed to treasury.accumulated_fees_usdc.
     Atomicity: SQLAlchemy session rolls back on any error before commit.
+
+    S-1 fix: sync def — FastAPI runs this in the threadpool, so synchronous
+    SQLAlchemy calls no longer block the event loop. On-chain settlement is
+    dispatched as a BackgroundTask after the response is sent.
     """
-    payload = await verify_signed_payload(request, db, SettlementTransferRequest)
+    payload = verify_signed_payload_from_bytes(
+        signed_body.content, signed_body.signature, db, SettlementTransferRequest
+    )
 
     if payload.agent_id == payload.receiver_id:
         raise HTTPException(
@@ -195,32 +287,38 @@ async def settlement_transfer(
     sender   = _get_wallet_or_404(db, payload.agent_id)
     receiver = _get_wallet_or_404(db, payload.receiver_id)
 
-    tx = _execute_transfer(db, payload.agent_id, payload.receiver_id, payload.amount_usdc, payload.tx_type)
+    # Look up sender's toll tier before acquiring row locks (plain indexed read).
+    tax_num, tax_den = _get_agent_toll_rate(db, payload.agent_id)
+
+    tx = _execute_transfer(
+        db, payload.agent_id, payload.receiver_id, payload.amount_usdc, payload.tx_type,
+        tax_numerator=tax_num, tax_denominator=tax_den,
+    )
 
     db.commit()
     db.refresh(sender)
     db.refresh(receiver)
     treasury = _get_or_init_treasury(db)
 
-    # Attempt on-chain settlement; ledger is already committed — any RPC
-    # failure is non-fatal and recorded as PENDING_SYNC for later retry.
+    # Dispatch on-chain settlement after response — ledger is already committed,
+    # so any RPC failure is non-fatal and will be retried by the recovery worker.
     if _w3_bridge.is_configured:
-        onchain = await _w3_bridge.process_onchain_settlement(
-            sender_wallet=sender.wallet_address,
-            receiver_wallet=receiver.wallet_address,
-            gross_amount=Decimal(str(tx.gross_amount_usdc)),
-            tax_amount=Decimal(str(tx.tax_amount_usdc)),
+        background_tasks.add_task(
+            _settle_onchain_background,
+            tx.tx_id,
+            sender.wallet_address,
+            receiver.wallet_address,
+            Decimal(str(tx.gross_amount_usdc)),
+            Decimal(str(tx.tax_amount_usdc)),
         )
-        tx.on_chain_status = onchain.status
-        tx.on_chain_net_tx_hash = onchain.net_tx_hash
-        tx.on_chain_tax_tx_hash = onchain.tax_tx_hash
-        db.commit()
+
+    toll_rate_pct = float(tax_num / tax_den * 100)
 
     logger.info(
-        "Settlement transfer tx=%s %s->%s gross=%.8f tax=%.8f net=%.8f on_chain=%s",
+        "Settlement transfer tx=%s %s->%s gross=%.8f tax=%.8f net=%.8f toll_rate=%.4f%%",
         tx.tx_id, payload.agent_id, payload.receiver_id,
         tx.gross_amount_usdc, tx.tax_amount_usdc, tx.net_amount_usdc,
-        tx.on_chain_status,
+        toll_rate_pct,
     )
 
     return SettlementTransferResponse(
@@ -234,6 +332,7 @@ async def settlement_transfer(
         sender_balance_usdc=float(sender.balance_usdc),
         receiver_balance_usdc=float(receiver.balance_usdc),
         treasury_accumulated_fees_usdc=float(treasury.accumulated_fees_usdc),
+        toll_rate_applied_pct=toll_rate_pct,
     )
 
 
@@ -242,8 +341,8 @@ async def settlement_transfer(
 # ---------------------------------------------------------------------------
 
 @router.post("/claim-bounty", response_model=BountyClaimResponse)
-async def claim_bounty(
-    request: Request,
+def claim_bounty(
+    signed_body: SignedBody = Depends(get_signed_body),
     db: Session = Depends(get_db),
 ) -> BountyClaimResponse:
     """
@@ -255,8 +354,11 @@ async def claim_bounty(
       3. The claimant retains the remainder in their wallet untouched.
 
     Auth: X-VectraFi-Signature required (with nonce/issued_at/chain_id).
+    S-1 fix: sync def — FastAPI threadpools this handler.
     """
-    payload = await verify_signed_payload(request, db, BountyClaimRequest)
+    payload = verify_signed_payload_from_bytes(
+        signed_body.content, signed_body.signature, db, BountyClaimRequest
+    )
 
     if payload.agent_id == payload.counterpart_id:
         raise HTTPException(

@@ -33,13 +33,13 @@ import itertools
 import logging
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import func, or_
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from database import get_db
 from models import AgentWallet, SettlementTransaction
-from routes.auth import verify_signed_payload
+from routes.auth import SignedBody, get_signed_body, verify_signed_payload_from_bytes
 from services.pricing import get_active_prices
 from schemas import (
     ArbitrageRouteRequest,
@@ -254,8 +254,8 @@ def arbitrage_route_path(
 # ---------------------------------------------------------------------------
 
 @router.post("/rebalance", response_model=RebalanceResponse)
-async def rebalance_agent_balance(
-    request: Request,
+def rebalance_agent_balance(
+    signed_body: SignedBody = Depends(get_signed_body),
     db: Session = Depends(get_db),
 ) -> RebalanceResponse:
     """
@@ -273,12 +273,17 @@ async def rebalance_agent_balance(
 
     Safety floor = volume_usdc × slippage_tolerance_pct.
     Rebalance triggers only when target.balance_usdc < safety_floor.
+
+    S-1 fix: sync def — FastAPI threadpools this handler so the synchronous
+    SQLAlchemy calls (including FOR UPDATE) no longer block the event loop.
     """
     # Import here to avoid a module-level circular-import risk; the function
     # is a stable internal primitive that will not move or be renamed.
     from routes.settlement import _execute_transfer  # noqa: PLC0415
 
-    payload = await verify_signed_payload(request, db, RebalanceRequest)
+    payload = verify_signed_payload_from_bytes(
+        signed_body.content, signed_body.signature, db, RebalanceRequest
+    )
 
     if payload.agent_id != payload.target_agent_id:
         raise HTTPException(

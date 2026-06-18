@@ -82,6 +82,16 @@ def test_protocol_params_has_execution_mode(client):
     assert len(d["protocol_domain"]) > 0
 
 
+def test_protocol_params_has_preferential_toll_rate(client):
+    resp = client.get(_PROTOCOL_URL)
+    assert resp.status_code == 200
+    d = resp.json()
+    assert "preferential_toll_rate_pct" in d
+    assert d["preferential_toll_rate_pct"] == pytest.approx(0.05, rel=1e-6)
+    # Preferential must be strictly less than standard
+    assert d["preferential_toll_rate_pct"] < d["tax_rate_pct"]
+
+
 # ---------------------------------------------------------------------------
 # 2. Treasury breakdown — empty DB
 # ---------------------------------------------------------------------------

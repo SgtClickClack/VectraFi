@@ -149,6 +149,8 @@ class SettlementTransferResponse(BaseModel):
     sender_balance_usdc: float
     receiver_balance_usdc: float
     treasury_accumulated_fees_usdc: float
+    toll_rate_applied_pct: float
+    on_chain_toll_tx: str | None = None  # tax leg tx hash; None in sandbox or until background task completes
 
 
 class BountyClaimRequest(BaseModel):
@@ -385,6 +387,7 @@ class ProtocolParamsResponse(BaseModel):
     execution_mode: str
     platform_treasury_address: str | None
     protocol_domain: str
+    preferential_toll_rate_pct: float
 
 
 # ---------------------------------------------------------------------------
@@ -506,3 +509,26 @@ class NegotiationClaimResponse(BaseModel):
 class NegotiationListResponse(BaseModel):
     total: int
     claims: list[NegotiationClaimResponse]
+
+
+# ---------------------------------------------------------------------------
+# Onboarding journey
+# ---------------------------------------------------------------------------
+
+class OnboardingStep(BaseModel):
+    step: int
+    name: str
+    completed: bool
+    endpoint: str | None
+    description: str
+
+
+class OnboardingJourneyResponse(BaseModel):
+    agent_id: str
+    citizen_status: Literal["unknown", "wallet_only", "active", "corridor_provisioner"]
+    completion_pct: float
+    completed_steps: int
+    total_steps: int
+    steps: list[OnboardingStep]
+    next_action: str | None
+    next_endpoint: str | None

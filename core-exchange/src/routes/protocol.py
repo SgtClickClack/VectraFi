@@ -29,15 +29,16 @@ import time
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 import watcher
 from config import PLATFORM_TREASURY_ADDRESS, PROTOCOL_DOMAIN
 from database import get_db
-from models import AgentWallet, NegotiationClaim
+from models import AgentWallet, NegotiationClaim, SettlementTransaction
+from ratelimit import evaluate_limiter, negotiate_limiter
 from schemas import (
     NegotiateIntentRequest,
     NegotiateIntentResponse,
@@ -59,12 +60,18 @@ _SAFETY_FLOOR_PCT:    float = 0.005          # 0.5% default slippage floor
 _RELAY_HOPS:          int   = 3
 _CANDIDATE_CAP:       int   = 10
 _GAS_COST_PER_HOP:    float = 0.05          # USDC per hop
+# Preferential toll rate for agents with a granted corridor provisioning claim (§3, §4).
+_PREFERENTIAL_TAX_RATE_FRACTION: float = 0.0005  # 0.05%
 
 # Baseline volume used when a claim doesn't specify requested_liquidity_usdc.
 _DEFAULT_EVAL_VOLUME: float = 100.0
 
 # Max registered-wallet candidates to pull for corridor evaluation.
 _EVAL_CANDIDATE_CAP:  int   = 10
+
+# G-2: maximum number of queued (unevaluated) claims allowed per agent at once.
+# Prevents DB storage-exhaustion DoS via uncapped claim submission.
+_MAX_QUEUED_PER_AGENT: int = 10
 
 
 def _claim_to_response(claim: NegotiationClaim) -> NegotiationClaimResponse:
@@ -108,6 +115,7 @@ def protocol_params() -> ProtocolParamsResponse:
         execution_mode="live_rpc" if is_live_mode() else "sandbox",
         platform_treasury_address=PLATFORM_TREASURY_ADDRESS,
         protocol_domain=PROTOCOL_DOMAIN,
+        preferential_toll_rate_pct=_PREFERENTIAL_TAX_RATE_FRACTION * 100,
     )
 
 
@@ -127,6 +135,28 @@ def negotiate_intent(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ) -> JSONResponse:
+    # G-2: per-agent rate limit — 20 intents per 60 s, defence against trivial flood.
+    negotiate_limiter.check(body.agent_id)
+
+    # G-2: cap outstanding queued claims per agent to prevent DB storage exhaustion.
+    queued_count = (
+        db.query(func.count(NegotiationClaim.negotiation_id))
+        .filter(
+            NegotiationClaim.agent_id == body.agent_id,
+            NegotiationClaim.status == "queued",
+        )
+        .scalar()
+        or 0
+    )
+    if queued_count >= _MAX_QUEUED_PER_AGENT:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=(
+                f"Agent '{body.agent_id}' already has {queued_count} queued claims "
+                f"(max {_MAX_QUEUED_PER_AGENT}). Evaluate existing claims before submitting more."
+            ),
+        )
+
     negotiation_id = str(uuid.uuid4())
     now = int(time.time())
     timestamp = datetime.now(tz=timezone.utc).isoformat()
@@ -224,17 +254,26 @@ def list_negotiations(
 )
 def evaluate_negotiation(
     negotiation_id: str,
+    request: Request,
     db: Session = Depends(get_db),
 ) -> NegotiationClaimResponse:
     # Import here to avoid module-level circular-import risk — same pattern
     # as _execute_transfer import in rebalance_agent_balance (arbitrage.py).
     from routes.arbitrage import _CANDIDATE_CAP as _ARB_CAP, _simulate_chain
 
+    # G-2: IP-based rate limit — caps how many expensive simulations one
+    # source can trigger per minute regardless of which claims they evaluate.
+    evaluate_limiter.check(request.client.host or "unknown")
+
     now = int(time.time())
 
-    # Acquire row-level exclusive lock before reading status — prevents two
-    # concurrent evaluate calls from both reading "queued" and double-transitioning.
-    # Mirrors the TreasuryState SELECT … FOR UPDATE in settlement.py (A-2).
+    # ------------------------------------------------------------------
+    # Phase 1 (C-1 fix): short lock — transition to evaluating, then commit.
+    # Releasing the lock before the simulation prevents the ≤20-permutation
+    # corridor scan from holding a DB-global write lock on SQLite (or a
+    # row-level lock on Postgres) for the full evaluation duration, which was
+    # blocking concurrent transfers and claim submissions.
+    # ------------------------------------------------------------------
     claim = db.execute(
         select(NegotiationClaim)
         .where(NegotiationClaim.negotiation_id == negotiation_id)
@@ -256,28 +295,43 @@ def evaluate_negotiation(
             ),
         )
 
-    # Transition to evaluating — flushed but not committed so the lock
-    # is held until the evaluation result is written in the same transaction.
+    # Save fields needed for phase 2 before commit expires the ORM object.
+    intent_type = claim.intent_type
+    requested_liquidity = claim.requested_liquidity_usdc
+    agent_id = claim.agent_id
+
     claim.status = "evaluating"
     claim.updated_at = now
-    db.flush()
+    db.commit()  # releases the row lock — simulation runs without holding it
 
     # ------------------------------------------------------------------
-    # Evaluation logic
+    # Phase 2: simulation — no locks held; reads only.
     # ------------------------------------------------------------------
-    if claim.intent_type in ("corridor_provisioning", "liquidity_allocation"):
+    if intent_type in ("corridor_provisioning", "liquidity_allocation"):
         volume = (
-            float(claim.requested_liquidity_usdc)
-            if claim.requested_liquidity_usdc is not None
+            float(requested_liquidity)
+            if requested_liquidity is not None
             else _DEFAULT_EVAL_VOLUME
         )
 
-        candidates = (
-            db.query(AgentWallet)
-            .order_by(AgentWallet.balance_usdc.desc())
-            .limit(_ARB_CAP)
+        # Exclude agents with PENDING_SYNC transactions — same filter as rebalance
+        # in arbitrage.py.  Spending permutation budget on on-chain-limbo agents
+        # wastes all 20 attempts if the highest-balance agent is blocked.
+        pending_rows = (
+            db.query(SettlementTransaction.sender_id)
+            .filter(SettlementTransaction.on_chain_status == "PENDING_SYNC")
+            .union(
+                db.query(SettlementTransaction.receiver_id)
+                .filter(SettlementTransaction.on_chain_status == "PENDING_SYNC")
+            )
             .all()
         )
+        blocked_ids: set[str] = {row[0] for row in pending_rows}
+
+        q = db.query(AgentWallet).order_by(AgentWallet.balance_usdc.desc())
+        if blocked_ids:
+            q = q.filter(AgentWallet.agent_id.notin_(blocked_ids))
+        candidates = q.limit(_ARB_CAP).all()
         candidate_ids = [c.agent_id for c in candidates]
 
         granted = False
@@ -286,11 +340,7 @@ def evaluate_negotiation(
         if len(candidate_ids) >= 2:
             path_len = min(3, len(candidate_ids))
             for chain in itertools.islice(itertools.permutations(candidate_ids, path_len), 20):
-                sp = db.begin_nested()
-                try:
-                    viable, _, _, _, rejection = _simulate_chain(db, list(chain), volume, 0.005)
-                finally:
-                    sp.rollback()
+                viable, _, _, _, _ = _simulate_chain(db, list(chain), volume, 0.005)
                 if viable:
                     granted = True
                     eval_reason = (
@@ -298,45 +348,78 @@ def evaluate_negotiation(
                         f"{volume:.4f} USDC — claim granted"
                     )
                     break
-            if not granted and len(candidate_ids) < 2:
-                eval_reason = "Insufficient registered wallets to simulate corridor viability"
+            if not granted:
+                eval_reason = f"No viable corridor path for {volume:.4f} USDC in current territory"
         else:
             eval_reason = "Insufficient registered wallets to simulate corridor viability"
 
-        claim.status = "granted" if granted else "rejected"
+        final_status = "granted" if granted else "rejected"
 
     else:
         # toll_share_negotiation and capital_reserve_claim are treaty-level
         # intents — corridor viability is not a prerequisite for these categories.
-        # Gap 3 (preferential toll tiers) will attach economic weight to granted
-        # claims of this type.
-        claim.status = "granted"
+        final_status = "granted"
         eval_reason = (
-            f"Territory acknowledges '{claim.intent_type}' as a sovereign treaty intent — "
+            f"Territory acknowledges '{intent_type}' as a sovereign treaty intent — "
             "claim granted; toll tier adjustment pending Gap 3 implementation"
         )
 
+    # ------------------------------------------------------------------
+    # Phase 3: short lock — write result and release.
+    # ------------------------------------------------------------------
+    now2 = int(time.time())
+    claim = db.execute(
+        select(NegotiationClaim)
+        .where(NegotiationClaim.negotiation_id == negotiation_id)
+        .with_for_update()
+    ).scalar_one_or_none()
+
+    claim.status = final_status
     claim.evaluation_reason = eval_reason
-    claim.evaluated_at = now
-    claim.updated_at = now
+    claim.evaluated_at = now2
+    claim.updated_at = now2
     db.commit()
 
     logger.info(
         "Negotiation evaluated: id=%s agent=%s intent=%s result=%s",
-        negotiation_id, claim.agent_id, claim.intent_type, claim.status,
+        negotiation_id, agent_id, intent_type, final_status,
     )
 
+    db.refresh(claim)
     return _claim_to_response(claim)
 
 
 @router.get(
     "/ledger",
-    summary="Fetch recent Citizenship Requests from the citizen ledger",
+    summary="Fetch recent negotiation intents from the citizen ledger",
     description=(
-        "Returns the most-recent negotiation intent log entries written by the Watcher Agent. "
-        "Each entry contains agent_id, intent_type, requested_liquidity, and timestamp."
+        "Returns the most-recent NegotiationClaim entries from the DB — the authoritative "
+        "ledger source, safe under multi-worker deployments (D-1 fix). "
+        "Each entry includes agent_id, intent_type, requested_liquidity, status, "
+        "negotiation_id, and timestamp."
     ),
 )
-def get_ledger(limit: int = 50) -> JSONResponse:
-    entries = watcher.read_ledger(limit=max(1, min(limit, 200)))
+def get_ledger(limit: int = 50, db: Session = Depends(get_db)) -> JSONResponse:
+    limit = max(1, min(limit, 200))
+    claims = (
+        db.query(NegotiationClaim)
+        .order_by(NegotiationClaim.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    entries = [
+        {
+            "negotiation_id": c.negotiation_id,
+            "agent_id": c.agent_id,
+            "intent_type": c.intent_type,
+            "requested_liquidity": (
+                float(c.requested_liquidity_usdc)
+                if c.requested_liquidity_usdc is not None
+                else None
+            ),
+            "status": c.status,
+            "timestamp": datetime.fromtimestamp(c.created_at, tz=timezone.utc).isoformat(),
+        }
+        for c in reversed(claims)  # return in chronological order
+    ]
     return JSONResponse(content={"count": len(entries), "entries": entries})

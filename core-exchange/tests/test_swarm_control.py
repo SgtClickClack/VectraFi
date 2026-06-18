@@ -52,7 +52,12 @@ def clean_state():
 
 @pytest.fixture()
 def client(client):  # noqa: F811 — shadows conftest fixture intentionally
-    return client
+    # Bypass the SWARM_OPERATOR_KEY gate so tests run without the env var set.
+    from main import app
+    from routes.swarm_control import _require_operator
+    app.dependency_overrides[_require_operator] = lambda: None
+    yield client
+    app.dependency_overrides.pop(_require_operator, None)
 
 
 # ── Status endpoint ────────────────────────────────────────────────────────

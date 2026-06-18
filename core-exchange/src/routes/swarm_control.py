@@ -10,17 +10,40 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import sys
 import time
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel
 
 logger = logging.getLogger("vectrafi.swarm_control")
 
 router = APIRouter(prefix="/api/v1/swarm", tags=["swarm-control"])
+
+# G-1 fix: require a secret operator key to access all swarm control endpoints.
+# Set SWARM_OPERATOR_KEY in environment to enable; leave unset to disable entirely.
+_OPERATOR_KEY: str = os.getenv("SWARM_OPERATOR_KEY", "").strip()
+
+
+def _require_operator(x_operator_key: str | None = Header(default=None)) -> None:
+    """Dependency that gates all swarm endpoints behind a shared operator secret."""
+    if not _OPERATOR_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Swarm control is disabled — set the SWARM_OPERATOR_KEY "
+                "environment variable to enable this interface"
+            ),
+        )
+    if x_operator_key != _OPERATOR_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing X-Operator-Key header",
+        )
+
 
 # ── Path to the swarm script (sibling of the routes/ package)
 _SWARM_SCRIPT = Path(__file__).resolve().parent.parent / "seed_swarm.py"
@@ -63,7 +86,7 @@ def _is_alive() -> bool:
 
 # ── Endpoints ──────────────────────────────────────────────────────────────
 
-@router.post("/start", response_model=SwarmStartResponse, status_code=200)
+@router.post("/start", response_model=SwarmStartResponse, status_code=200, dependencies=[Depends(_require_operator)])
 async def start_swarm(body: SwarmStartRequest = SwarmStartRequest()) -> SwarmStartResponse:
     global _proc, _proc_dry_run, _proc_start_time
 
@@ -95,7 +118,7 @@ async def start_swarm(body: SwarmStartRequest = SwarmStartRequest()) -> SwarmSta
     return SwarmStartResponse(status="started", pid=_proc.pid, dry_run=body.dry_run)
 
 
-@router.post("/stop", response_model=SwarmStopResponse, status_code=200)
+@router.post("/stop", response_model=SwarmStopResponse, status_code=200, dependencies=[Depends(_require_operator)])
 async def stop_swarm() -> SwarmStopResponse:
     global _proc, _proc_dry_run, _proc_start_time
 
@@ -123,7 +146,7 @@ async def stop_swarm() -> SwarmStopResponse:
     return SwarmStopResponse(status="stopped", pid=pid)
 
 
-@router.get("/status", response_model=SwarmStatusResponse)
+@router.get("/status", response_model=SwarmStatusResponse, dependencies=[Depends(_require_operator)])
 def swarm_status() -> SwarmStatusResponse:
     alive = _is_alive()
     uptime = (

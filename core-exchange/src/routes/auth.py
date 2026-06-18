@@ -1,6 +1,7 @@
 import json
 import logging
 import time
+from dataclasses import dataclass
 from typing import TypeVar
 
 from eth_account import Account
@@ -22,8 +23,38 @@ def _normalize_address(address: str) -> str:
     return address.lower()
 
 
-async def verify_signed_payload(request: Request, db: Session, model: type[T]) -> T:
-    body_bytes = await request.body()
+@dataclass
+class SignedBody:
+    """Pre-read request body and signature header for use in sync handlers."""
+    content: bytes
+    signature: str | None
+
+
+async def get_signed_body(request: Request) -> SignedBody:
+    """FastAPI dependency: reads the raw body and signature header asynchronously.
+
+    Inject this in place of `request: Request` to convert an async handler that
+    only awaited `request.body()` into a sync handler (FastAPI threadpools it),
+    eliminating the event-loop blocking caused by sync SQLAlchemy calls in async
+    context (S-1 fix).
+    """
+    return SignedBody(
+        content=await request.body(),
+        signature=request.headers.get(SIGNATURE_HEADER),
+    )
+
+
+def verify_signed_payload_from_bytes(
+    body_bytes: bytes,
+    signature: str | None,
+    db: Session,
+    model: type[T],
+) -> T:
+    """Sync signature verification — all crypto and DB work, no I/O awaits.
+
+    Extracted from verify_signed_payload so it can be called from sync route
+    handlers that receive body bytes via the get_signed_body dependency.
+    """
     if not body_bytes:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -31,7 +62,6 @@ async def verify_signed_payload(request: Request, db: Session, model: type[T]) -
         )
 
     body_text = body_bytes.decode("utf-8")
-    signature = request.headers.get(SIGNATURE_HEADER)
     if not signature:
         logger.warning("Rejected unsigned transaction — missing %s header", SIGNATURE_HEADER)
         raise HTTPException(
@@ -183,3 +213,10 @@ async def verify_signed_payload(request: Request, db: Session, model: type[T]) -
         nonce,
     )
     return payload
+
+
+async def verify_signed_payload(request: Request, db: Session, model: type[T]) -> T:
+    """Async wrapper — reads body then delegates to the sync verification function."""
+    body_bytes = await request.body()
+    sig = request.headers.get(SIGNATURE_HEADER)
+    return verify_signed_payload_from_bytes(body_bytes, sig, db, model)

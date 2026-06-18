@@ -20,7 +20,8 @@ import time
 import uuid
 
 import pytest
-from conftest import _TestSessionLocal, make_agent
+from eth_account import Account
+from conftest import _TestSessionLocal, make_agent, sign_body
 
 from models import SettlementTransaction
 
@@ -34,8 +35,14 @@ _DEFAULT_SLIP = 0.005   # floor = 0.5 USDC
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _post(client, body: dict):
-    return client.post(_URL, json=body)
+def _post(client, body: dict, acct=None, wallet=None):
+    if acct is None:
+        return client.post(_URL, json=body)
+    body = {**body}
+    body.setdefault("agent_id", wallet.agent_id)
+    body.setdefault("wallet_address", wallet.wallet_address)
+    sig = sign_body(acct, body)
+    return client.post(_URL, json=body, headers={"X-VectraFi-Signature": sig})
 
 
 def _base_body(**kwargs) -> dict:
@@ -91,12 +98,12 @@ def _seed_pending_sync(agent_id: str) -> None:
 
 def test_rebalance_happy_path(client):
     # Target is below safety floor: vol=100, slip=0.005 → floor=0.5; target has 0.1
-    _, target = make_agent("reb1-target",  balance_usdc=0.1)
-    _, r0     = make_agent("reb1-relay0",  balance_usdc=500.0)
-    _, r1     = make_agent("reb1-relay1",  balance_usdc=500.0)
-    _, r2     = make_agent("reb1-relay2",  balance_usdc=500.0)
+    target_acct, target = make_agent("reb1-target",  balance_usdc=0.1)
+    _, r0               = make_agent("reb1-relay0",  balance_usdc=500.0)
+    _, r1               = make_agent("reb1-relay1",  balance_usdc=500.0)
+    _, r2               = make_agent("reb1-relay2",  balance_usdc=500.0)
 
-    resp = _post(client, _base_body(target_agent_id=target.agent_id))
+    resp = _post(client, _base_body(target_agent_id=target.agent_id), target_acct, target)
     assert resp.status_code == 200, resp.text
     d = resp.json()
 
@@ -113,7 +120,7 @@ def test_rebalance_happy_path(client):
 # ---------------------------------------------------------------------------
 
 def test_rebalance_target_balance_restored_above_floor(client):
-    _, target = make_agent("reb2-target", balance_usdc=0.0)
+    target_acct, target = make_agent("reb2-target", balance_usdc=0.0)
     make_agent("reb2-r0", balance_usdc=500.0)
     make_agent("reb2-r1", balance_usdc=500.0)
     make_agent("reb2-r2", balance_usdc=500.0)
@@ -126,7 +133,7 @@ def test_rebalance_target_balance_restored_above_floor(client):
         target_agent_id=target.agent_id,
         volume_usdc=vol,
         slippage_tolerance_pct=slip,
-    ))
+    ), target_acct, target)
     assert resp.status_code == 200, resp.text
     d = resp.json()
 
@@ -141,12 +148,12 @@ def test_rebalance_target_balance_restored_above_floor(client):
 # ---------------------------------------------------------------------------
 
 def test_rebalance_creates_exactly_3_transactions(client):
-    _, target = make_agent("reb3-target", balance_usdc=0.0)
+    target_acct, target = make_agent("reb3-target", balance_usdc=0.0)
     make_agent("reb3-r0", balance_usdc=500.0)
     make_agent("reb3-r1", balance_usdc=500.0)
     make_agent("reb3-r2", balance_usdc=500.0)
 
-    resp = _post(client, _base_body(target_agent_id=target.agent_id))
+    resp = _post(client, _base_body(target_agent_id=target.agent_id), target_acct, target)
     assert resp.status_code == 200, resp.text
     d = resp.json()
 
@@ -160,12 +167,12 @@ def test_rebalance_creates_exactly_3_transactions(client):
 # ---------------------------------------------------------------------------
 
 def test_rebalance_tax_per_hop(client):
-    _, target = make_agent("reb4-target", balance_usdc=0.0)
+    target_acct, target = make_agent("reb4-target", balance_usdc=0.0)
     make_agent("reb4-r0", balance_usdc=500.0)
     make_agent("reb4-r1", balance_usdc=500.0)
     make_agent("reb4-r2", balance_usdc=500.0)
 
-    resp = _post(client, _base_body(target_agent_id=target.agent_id, volume_usdc=200.0))
+    resp = _post(client, _base_body(target_agent_id=target.agent_id, volume_usdc=200.0), target_acct, target)
     assert resp.status_code == 200, resp.text
     d = resp.json()
 
@@ -185,12 +192,12 @@ def test_rebalance_tax_per_hop(client):
 # ---------------------------------------------------------------------------
 
 def test_rebalance_cascade_amounts(client):
-    _, target = make_agent("reb5-target", balance_usdc=0.0)
+    target_acct, target = make_agent("reb5-target", balance_usdc=0.0)
     make_agent("reb5-r0", balance_usdc=500.0)
     make_agent("reb5-r1", balance_usdc=500.0)
     make_agent("reb5-r2", balance_usdc=500.0)
 
-    resp = _post(client, _base_body(target_agent_id=target.agent_id, volume_usdc=50.0))
+    resp = _post(client, _base_body(target_agent_id=target.agent_id, volume_usdc=50.0), target_acct, target)
     assert resp.status_code == 200, resp.text
     hops = resp.json()["transactions"]
 
@@ -211,14 +218,14 @@ def test_rebalance_cascade_amounts(client):
 # ---------------------------------------------------------------------------
 
 def test_rebalance_relay0_loses_full_volume(client):
-    _, target = make_agent("reb6-target", balance_usdc=0.0)
+    target_acct, target = make_agent("reb6-target", balance_usdc=0.0)
     # 10 000 USDC > any arb agent in the shared session DB (max ~9 999) → guaranteed relay_0
-    _, r0     = make_agent("reb6-r0",     balance_usdc=10_000.0)
+    _, r0               = make_agent("reb6-r0",     balance_usdc=10_000.0)
     make_agent("reb6-r1", balance_usdc=500.0)
     make_agent("reb6-r2", balance_usdc=500.0)
 
     vol = 80.0
-    resp = _post(client, _base_body(target_agent_id=target.agent_id, volume_usdc=vol))
+    resp = _post(client, _base_body(target_agent_id=target.agent_id, volume_usdc=vol), target_acct, target)
     assert resp.status_code == 200, resp.text
     d = resp.json()
 
@@ -233,15 +240,15 @@ def test_rebalance_relay0_loses_full_volume(client):
 # ---------------------------------------------------------------------------
 
 def test_rebalance_relay_intermediaries_lose_only_tax(client):
-    _, target = make_agent("reb7-target", balance_usdc=0.0)
+    target_acct, target = make_agent("reb7-target", balance_usdc=0.0)
     # Use escalating balances well above any prior session DB agent to guarantee
     # deterministic relay_0/1/2 selection (20 000 > 15 000 > 10 001 > 10 000 from reb6).
     make_agent("reb7-r0", balance_usdc=20_000.0)
-    _, r1     = make_agent("reb7-r1",     balance_usdc=15_000.0)
-    _, r2     = make_agent("reb7-r2",     balance_usdc=10_001.0)
+    _, r1               = make_agent("reb7-r1",     balance_usdc=15_000.0)
+    _, r2               = make_agent("reb7-r2",     balance_usdc=10_001.0)
 
     vol = 60.0
-    resp = _post(client, _base_body(target_agent_id=target.agent_id, volume_usdc=vol))
+    resp = _post(client, _base_body(target_agent_id=target.agent_id, volume_usdc=vol), target_acct, target)
     assert resp.status_code == 200, resp.text
     d = resp.json()
 
@@ -266,7 +273,13 @@ def test_rebalance_relay_intermediaries_lose_only_tax(client):
 # ---------------------------------------------------------------------------
 
 def test_rebalance_target_not_found_returns_404(client):
-    resp = _post(client, _base_body(target_agent_id="reb8-ghost-does-not-exist"))
+    ghost_acct = Account.create()
+    ghost_id = "reb8-ghost-does-not-exist"
+    body = _base_body(target_agent_id=ghost_id)
+    body["agent_id"] = ghost_id
+    body["wallet_address"] = ghost_acct.address
+    sig = sign_body(ghost_acct, body)
+    resp = client.post(_URL, json=body, headers={"X-VectraFi-Signature": sig})
     assert resp.status_code == 404
 
 
@@ -276,12 +289,12 @@ def test_rebalance_target_not_found_returns_404(client):
 
 def test_rebalance_balance_above_floor_rejected(client):
     # vol=100, slip=0.005 → floor=0.5; target has 1.0 > 0.5 → no rebalance needed
-    _, target = make_agent("reb9-target", balance_usdc=1.0)
+    target_acct, target = make_agent("reb9-target", balance_usdc=1.0)
     make_agent("reb9-r0", balance_usdc=500.0)
     make_agent("reb9-r1", balance_usdc=500.0)
     make_agent("reb9-r2", balance_usdc=500.0)
 
-    resp = _post(client, _base_body(target_agent_id=target.agent_id))
+    resp = _post(client, _base_body(target_agent_id=target.agent_id), target_acct, target)
     assert resp.status_code == 200, resp.text
     d = resp.json()
 
@@ -300,13 +313,13 @@ def test_rebalance_no_viable_path_rejected(client):
     # vol=1 000 000 exceeds every agent balance in the shared session DB.
     # Simulation floor (vol*slip/3 ≈ 1 667) is met by existing 9 999-USDC agents,
     # but the relay_0 volume check (relay_0.balance >= vol) fails → rejected.
-    _, target = make_agent("reb10-target", balance_usdc=0.0)
+    target_acct, target = make_agent("reb10-target", balance_usdc=0.0)
 
     resp = _post(client, _base_body(
         target_agent_id=target.agent_id,
         volume_usdc=1_000_000.0,
         slippage_tolerance_pct=0.005,
-    ))
+    ), target_acct, target)
     assert resp.status_code == 200, resp.text
     d = resp.json()
 
@@ -321,15 +334,15 @@ def test_rebalance_no_viable_path_rejected(client):
 # ---------------------------------------------------------------------------
 
 def test_rebalance_pending_sync_excluded_from_relay(client):
-    _, target   = make_agent("reb11-target",  balance_usdc=0.0)
+    target_acct, target = make_agent("reb11-target",  balance_usdc=0.0)
     # 25 000 > any agent in the shared DB (reb7-r0 is ~19 900) → would be relay_0 if not blocked
-    _, blocked  = make_agent("reb11-blocked", balance_usdc=25_000.0)
-    _, ok_r0    = make_agent("reb11-ok-r0",   balance_usdc=500.0)
-    _, ok_r1    = make_agent("reb11-ok-r1",   balance_usdc=500.0)
-    _, ok_r2    = make_agent("reb11-ok-r2",   balance_usdc=500.0)
+    _, blocked          = make_agent("reb11-blocked", balance_usdc=25_000.0)
+    _, ok_r0            = make_agent("reb11-ok-r0",   balance_usdc=500.0)
+    _, ok_r1            = make_agent("reb11-ok-r1",   balance_usdc=500.0)
+    _, ok_r2            = make_agent("reb11-ok-r2",   balance_usdc=500.0)
     _seed_pending_sync(blocked.agent_id)
 
-    resp = _post(client, _base_body(target_agent_id=target.agent_id))
+    resp = _post(client, _base_body(target_agent_id=target.agent_id), target_acct, target)
     assert resp.status_code == 200, resp.text
     d = resp.json()
 
@@ -347,12 +360,12 @@ def test_rebalance_relay0_insufficient_volume_rejected(client):
     # test_rebalance_relay0_only_candidate_insufficient (reb12b) below, which
     # uses vol=100 000 to guarantee relay_0.balance < volume regardless of which
     # richest agent in the shared session DB is picked.
-    _, target = make_agent("reb12-target", balance_usdc=0.0)
+    target_acct, target = make_agent("reb12-target", balance_usdc=0.0)
     make_agent("reb12-r0", balance_usdc=0.5)
     make_agent("reb12-r1", balance_usdc=500.0)
     make_agent("reb12-r2", balance_usdc=500.0)
 
-    resp = _post(client, _base_body(target_agent_id=target.agent_id, volume_usdc=100.0))
+    resp = _post(client, _base_body(target_agent_id=target.agent_id, volume_usdc=100.0), target_acct, target)
     assert resp.status_code == 200, resp.text
     # Rebalance succeeds (richer agents from earlier tests serve as relays).
     pass
@@ -364,13 +377,13 @@ def test_rebalance_relay0_only_candidate_insufficient(client):
     # unblocked agent in the shared session DB.  Simulation floor = 100 000*0.005/3 ≈ 167,
     # which reb7-r0 does satisfy, so the simulation is viable but the relay_0 volume
     # hard-check (balance >= volume) fires → rejected.
-    _, target = make_agent("reb12b-target", balance_usdc=0.0)
+    target_acct, target = make_agent("reb12b-target", balance_usdc=0.0)
 
     resp = _post(client, _base_body(
         target_agent_id=target.agent_id,
         volume_usdc=100_000.0,
         slippage_tolerance_pct=0.005,
-    ))
+    ), target_acct, target)
     assert resp.status_code == 200, resp.text
     d = resp.json()
 
