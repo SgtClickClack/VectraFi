@@ -33,7 +33,11 @@ HOLDING_ADDRESS_BOUNTY = "0x0000000000000000000000000000000000000002"  # STANDAL
 FEE_SPLIT_CREATOR_RATE: Final[float] = 0.80
 FEE_SPLIT_BOUNTY_RATE: Final[float]  = 0.20
 
-DEFAULT_USDC_BALANCE = 1000.0
+# Live mode: agents must deposit real funds (0 USDC starter).
+# Sandbox mode: 1000 USDC starter balance for testing convenience.
+# Override either mode via WALLET_INITIAL_USDC env var.
+_LIVE_MODE = bool(RPC_PROVIDER_URL)
+DEFAULT_USDC_BALANCE = float(os.getenv("WALLET_INITIAL_USDC", "0.0" if _LIVE_MODE else "1000.0"))
 DEFAULT_HBAR_BALANCE = 0.0
 
 VAULT_ROUTING_ADDRESS = HOLDING_ADDRESS_USER

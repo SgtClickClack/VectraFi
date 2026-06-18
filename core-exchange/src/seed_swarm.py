@@ -470,13 +470,26 @@ async def maybe_rebalance(
     stats:  SwarmStats,
 ) -> None:
     body = {
-        "target_agent_id":       desk.agent_id,
-        "volume_usdc":           _REBALANCE_VOLUME,
+        "agent_id":               desk.agent_id,
+        "wallet_address":         desk.wallet_address,
+        "target_agent_id":        desk.agent_id,
+        "volume_usdc":            _REBALANCE_VOLUME,
         "slippage_tolerance_pct": _SAFETY_FLOOR_PCT,
+        "nonce":                  str(uuid.uuid4()),
+        "issued_at":              int(time.time()),
+        "chain_id":               PROTOCOL_DOMAIN,
     }
+    raw_body, sig_hex = _signed_body(body, desk.private_key)
     stats.rebalances_fired += 1
     try:
-        resp = await client.post(f"{_API_BASE}/api/v1/arbitrage/rebalance", json=body)
+        resp = await client.post(
+            f"{_API_BASE}/api/v1/arbitrage/rebalance",
+            content=raw_body,
+            headers={
+                "Content-Type":         "application/json",
+                "X-VectraFi-Signature": sig_hex,
+            },
+        )
         if resp.status_code == 200:
             d = resp.json()
             if d.get("rebalanced"):

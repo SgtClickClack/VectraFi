@@ -251,7 +251,7 @@ async def claim_bounty(
 
     The claimant holds the gross bounty in their wallet. This endpoint:
       1. Computes the counterpart's gross share: bounty_amount * counterpart_share_pct.
-      2. Executes a signed transfer claimant -> counterpart (1.5% tax deducted).
+      2. Executes a signed transfer claimant -> counterpart (0.1% tax deducted).
       3. The claimant retains the remainder in their wallet untouched.
 
     Auth: X-VectraFi-Signature required (with nonce/issued_at/chain_id).
@@ -312,7 +312,7 @@ def settlement_analytics(db: Session = Depends(get_db)) -> TreasuryAnalyticsResp
     Public read-only endpoint: returns aggregate settlement statistics.
 
     No auth required. Queries:
-    - treasury.accumulated_fees_usdc (1.5% micro-tax accumulator)
+    - treasury.accumulated_fees_usdc (0.1% micro-tax accumulator)
     - COUNT(*) of all settlement_transactions rows
     - SUM(gross_amount_usdc) across all settlement_transactions
     - COUNT(*) of registered agent_wallets

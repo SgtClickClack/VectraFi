@@ -225,7 +225,9 @@ class ErrorResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 class RebalanceRequest(BaseModel):
-    target_agent_id: str = Field(..., min_length=1, max_length=64)
+    agent_id: str = Field(..., min_length=1, max_length=64, description="Signer — must equal target_agent_id")
+    wallet_address: str = Field(..., min_length=42, max_length=42, description="Registered wallet address of the signer")
+    target_agent_id: str = Field(..., min_length=1, max_length=64, description="Agent whose balance to rebalance — must equal agent_id")
     volume_usdc: float = Field(
         ..., gt=0,
         description="Gross volume to initiate at the first relay hop",
@@ -236,6 +238,13 @@ class RebalanceRequest(BaseModel):
         le=0.10,
         description="Safety floor = volume × this fraction; rebalance triggers when target is below it",
     )
+
+    @field_validator("wallet_address")
+    @classmethod
+    def _validate_eth_address(cls, v: str) -> str:
+        if not re.fullmatch(r"0x[0-9a-fA-F]{40}", v):
+            raise ValueError("wallet_address must be 0x + 40 hex chars")
+        return v
 
 
 class RebalanceHop(BaseModel):
@@ -442,8 +451,8 @@ class NegotiateIntentRequest(BaseModel):
         "capital_reserve_claim",
     ] = Field(..., description="Category of resource intent being submitted")
     requested_liquidity_usdc: float | None = Field(
-        default=None, gt=0,
-        description="Liquidity volume the agent is requesting to provision (USDC)",
+        default=None, gt=0, le=10_000_000,
+        description="Liquidity volume the agent is requesting to provision (USDC); capped at 10M",
     )
     proposed_toll_share_pct: float | None = Field(
         default=None, ge=0.0, le=1.0,
@@ -455,13 +464,45 @@ class NegotiateIntentRequest(BaseModel):
     )
     metadata: dict[str, Any] | None = Field(
         default=None,
-        description="Arbitrary agent-supplied context — logged and forwarded to the negotiation engine",
+        description="Arbitrary agent-supplied context (max 16 keys, values serialised to ≤1 KB total)",
     )
+
+    @field_validator("metadata")
+    @classmethod
+    def _bound_metadata(cls, v: dict[str, Any] | None) -> dict[str, Any] | None:
+        if v is None:
+            return v
+        if len(v) > 16:
+            raise ValueError("metadata must contain at most 16 keys")
+        import json
+        if len(json.dumps(v)) > 1024:
+            raise ValueError("metadata serialised size must not exceed 1 KB")
+        return v
 
 
 class NegotiateIntentResponse(BaseModel):
     negotiation_id: str = Field(..., description="Unique ID for tracking this negotiation handshake")
     agent_id: str
     intent_type: str
-    status: Literal["accepted", "queued", "rejected"] = "accepted"
+    status: Literal["queued", "evaluating", "granted", "rejected"] = "queued"
     message: str
+
+
+class NegotiationClaimResponse(BaseModel):
+    negotiation_id: str
+    agent_id: str
+    intent_type: str
+    status: Literal["queued", "evaluating", "granted", "rejected"]
+    requested_liquidity_usdc: float | None
+    proposed_toll_share_pct: float | None
+    target_corridor: str | None
+    metadata: dict[str, Any] | None
+    evaluation_reason: str | None
+    created_at: int
+    updated_at: int
+    evaluated_at: int | None
+
+
+class NegotiationListResponse(BaseModel):
+    total: int
+    claims: list[NegotiationClaimResponse]

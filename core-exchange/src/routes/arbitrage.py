@@ -33,12 +33,13 @@ import itertools
 import logging
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from database import get_db
 from models import AgentWallet, SettlementTransaction
+from routes.auth import verify_signed_payload
 from services.pricing import get_active_prices
 from schemas import (
     ArbitrageRouteRequest,
@@ -253,15 +254,19 @@ def arbitrage_route_path(
 # ---------------------------------------------------------------------------
 
 @router.post("/rebalance", response_model=RebalanceResponse)
-def rebalance_agent_balance(
-    payload: RebalanceRequest,
+async def rebalance_agent_balance(
+    request: Request,
     db: Session = Depends(get_db),
 ) -> RebalanceResponse:
     """
-    Autonomously route liquidity to a target agent whose balance has breached
-    its safety floor via a 3-hop relay chain drawn from the most-liquid agents.
+    Route liquidity to the *signer's own* wallet when its balance breaches the
+    safety floor, via a 3-hop relay chain drawn from the most-liquid agents.
 
-    No EIP-191 signature is required — this is an internal engine operation.
+    Auth: X-VectraFi-Signature required.  agent_id must equal target_agent_id —
+    agents may only request a rebalance for themselves.  This prevents external
+    actors from conscripting relay agents into liquidity transfers that drain
+    non-consenting wallets.
+
     All three relay transfers are executed atomically inside a single DB
     transaction using the same pessimistic-locking primitive as settlement/transfer.
     If any hop fails at execution time, the entire batch is rolled back.
@@ -272,6 +277,17 @@ def rebalance_agent_balance(
     # Import here to avoid a module-level circular-import risk; the function
     # is a stable internal primitive that will not move or be renamed.
     from routes.settlement import _execute_transfer  # noqa: PLC0415
+
+    payload = await verify_signed_payload(request, db, RebalanceRequest)
+
+    if payload.agent_id != payload.target_agent_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "agent_id must equal target_agent_id — "
+                "you may only request a rebalance for your own wallet"
+            ),
+        )
 
     # ------------------------------------------------------------------
     # 1. Resolve target wallet
@@ -393,6 +409,20 @@ def rebalance_agent_balance(
 
     senders   = [relay_ids[0], relay_ids[1], relay_ids[2]]
     receivers = [relay_ids[1], relay_ids[2], payload.target_agent_id]
+
+    # Pre-lock every wallet that will participate in this rebalance in a
+    # single alphabetically-ordered SELECT … FOR UPDATE, establishing one
+    # global lock order for the entire multi-hop transaction.  Without this,
+    # two concurrent rebalances whose relay sets overlap but rank differently
+    # (because candidates are chosen by balance, not by agent_id) would
+    # acquire locks in opposite orders and deadlock on Postgres.
+    _all_participant_ids = sorted(set(relay_ids + [payload.target_agent_id]))
+    db.execute(
+        select(AgentWallet)
+        .where(AgentWallet.agent_id.in_(_all_participant_ids))
+        .with_for_update()
+        .order_by(AgentWallet.agent_id)
+    ).scalars().all()
 
     executed: list[RebalanceHop] = []
     total_tax = Decimal("0")

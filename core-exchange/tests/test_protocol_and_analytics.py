@@ -22,6 +22,7 @@ from models import SettlementTransaction
 
 _PROTOCOL_URL       = "/api/v1/protocol/params"
 _NEGOTIATE_URL      = "/api/v1/protocol/negotiate-intent"
+_NEGOTIATIONS_URL   = "/api/v1/protocol/negotiations"
 _BREAKDOWN_URL  = "/api/v1/analytics/treasury-breakdown"
 _SWARM_URL      = "/api/v1/analytics/swarm"
 _HEARTBEAT_URL  = "/api/v1/analytics/swarm/heartbeat"
@@ -206,7 +207,7 @@ def test_negotiate_intent_returns_202(client):
     d = resp.json()
     assert d["agent_id"]   == "test-citizen-agent"
     assert d["intent_type"] == "liquidity_allocation"
-    assert d["status"]      == "accepted"
+    assert d["status"]      == "queued"
     assert len(d["negotiation_id"]) == 36  # UUID4 length
 
 
@@ -221,7 +222,7 @@ def test_negotiate_intent_corridor_provisioning(client):
     resp = client.post(_NEGOTIATE_URL, json=body)
     assert resp.status_code == 202, resp.text
     d = resp.json()
-    assert d["status"] == "accepted"
+    assert d["status"] == "queued"
     assert "negotiation_id" in d
 
 
@@ -232,3 +233,164 @@ def test_negotiate_intent_rejects_invalid_intent_type(client):
     }
     resp = client.post(_NEGOTIATE_URL, json=body)
     assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# 9. negotiate-intent — DB persistence (Gap 1)
+# ---------------------------------------------------------------------------
+
+def test_negotiate_intent_persists_and_fetchable(client):
+    """POST creates a DB row; GET /negotiations/{id} returns it with status=queued."""
+    body = {
+        "agent_id": "persist-test-agent",
+        "intent_type": "capital_reserve_claim",
+        "requested_liquidity_usdc": 1000.0,
+        "target_corridor": "Persist-test corridor",
+    }
+    post_resp = client.post(_NEGOTIATE_URL, json=body)
+    assert post_resp.status_code == 202, post_resp.text
+    negotiation_id = post_resp.json()["negotiation_id"]
+
+    get_resp = client.get(f"{_NEGOTIATIONS_URL}/{negotiation_id}")
+    assert get_resp.status_code == 200, get_resp.text
+    d = get_resp.json()
+    assert d["negotiation_id"]             == negotiation_id
+    assert d["agent_id"]                   == "persist-test-agent"
+    assert d["intent_type"]                == "capital_reserve_claim"
+    assert d["status"]                     == "queued"
+    assert d["requested_liquidity_usdc"]   == pytest.approx(1000.0)
+    assert d["target_corridor"]            == "Persist-test corridor"
+    assert d["created_at"]                 > 0
+    assert d["updated_at"]                 == d["created_at"]
+
+
+def test_negotiate_intent_persists_metadata(client):
+    """Metadata dict round-trips through JSON serialisation correctly."""
+    meta = {"priority": "high", "wave": 3}
+    body = {
+        "agent_id": "meta-test-agent",
+        "intent_type": "corridor_provisioning",
+        "proposed_toll_share_pct": 0.25,
+        "metadata": meta,
+    }
+    post_resp = client.post(_NEGOTIATE_URL, json=body)
+    assert post_resp.status_code == 202
+    negotiation_id = post_resp.json()["negotiation_id"]
+
+    get_resp = client.get(f"{_NEGOTIATIONS_URL}/{negotiation_id}")
+    assert get_resp.status_code == 200
+    d = get_resp.json()
+    assert d["metadata"]               == meta
+    assert d["proposed_toll_share_pct"] == pytest.approx(0.25)
+
+
+def test_get_negotiation_not_found(client):
+    """Unknown negotiation_id returns 404."""
+    resp = client.get(f"{_NEGOTIATIONS_URL}/00000000-0000-0000-0000-000000000000")
+    assert resp.status_code == 404
+
+
+def test_list_negotiations_filtered_by_agent(client):
+    """GET /negotiations?agent_id= returns only that agent's claims."""
+    unique_agent = "list-filter-agent-unique-xyz"
+    for intent in ("liquidity_allocation", "toll_share_negotiation"):
+        client.post(_NEGOTIATE_URL, json={"agent_id": unique_agent, "intent_type": intent})
+
+    resp = client.get(f"{_NEGOTIATIONS_URL}?agent_id={unique_agent}")
+    assert resp.status_code == 200, resp.text
+    d = resp.json()
+    assert d["total"] == 2
+    assert all(c["agent_id"] == unique_agent for c in d["claims"])
+    intent_types = {c["intent_type"] for c in d["claims"]}
+    assert intent_types == {"liquidity_allocation", "toll_share_negotiation"}
+
+
+def test_list_negotiations_unfiltered(client):
+    """GET /negotiations with no filter returns all persisted claims."""
+    resp = client.get(_NEGOTIATIONS_URL)
+    assert resp.status_code == 200
+    d = resp.json()
+    assert "total" in d
+    assert "claims" in d
+    assert isinstance(d["claims"], list)
+    assert d["total"] == len(d["claims"])
+
+
+# ---------------------------------------------------------------------------
+# 10. evaluate — lifecycle transitions (Gap 2)
+# ---------------------------------------------------------------------------
+
+def _post_and_get_id(client, agent_id: str, intent_type: str, **kwargs) -> str:
+    body = {"agent_id": agent_id, "intent_type": intent_type, **kwargs}
+    resp = client.post(_NEGOTIATE_URL, json=body)
+    assert resp.status_code == 202
+    return resp.json()["negotiation_id"]
+
+
+def test_evaluate_treaty_intent_auto_grants(client):
+    """toll_share_negotiation and capital_reserve_claim are auto-granted."""
+    for intent in ("toll_share_negotiation", "capital_reserve_claim"):
+        nid = _post_and_get_id(client, f"eval-treaty-{intent}", intent)
+        resp = client.post(f"{_NEGOTIATIONS_URL}/{nid}/evaluate")
+        assert resp.status_code == 200, resp.text
+        d = resp.json()
+        assert d["status"] == "granted"
+        assert d["evaluated_at"] is not None
+        assert d["evaluation_reason"] is not None
+        assert len(d["evaluation_reason"]) > 0
+
+
+def test_evaluate_transitions_queued_to_terminal(client):
+    """evaluate moves a claim out of 'queued'; status is one of the terminal states."""
+    nid = _post_and_get_id(client, "eval-transition-agent", "liquidity_allocation",
+                           requested_liquidity_usdc=50.0)
+    resp = client.post(f"{_NEGOTIATIONS_URL}/{nid}/evaluate")
+    assert resp.status_code == 200, resp.text
+    d = resp.json()
+    assert d["status"] in ("granted", "rejected")
+    assert d["evaluated_at"] is not None
+    assert d["evaluation_reason"] is not None
+
+
+def test_evaluate_get_reflects_updated_status(client):
+    """After evaluate, GET /negotiations/{id} returns the updated status."""
+    nid = _post_and_get_id(client, "eval-get-reflect-agent", "corridor_provisioning")
+    client.post(f"{_NEGOTIATIONS_URL}/{nid}/evaluate")
+
+    get_resp = client.get(f"{_NEGOTIATIONS_URL}/{nid}")
+    assert get_resp.status_code == 200
+    d = get_resp.json()
+    assert d["status"] in ("granted", "rejected")
+    assert d["evaluated_at"] is not None
+
+
+def test_evaluate_already_evaluated_returns_409(client):
+    """Calling evaluate twice on the same claim returns 409 Conflict."""
+    nid = _post_and_get_id(client, "eval-double-call-agent", "toll_share_negotiation")
+    client.post(f"{_NEGOTIATIONS_URL}/{nid}/evaluate")
+    resp = client.post(f"{_NEGOTIATIONS_URL}/{nid}/evaluate")
+    assert resp.status_code == 409, resp.text
+    assert "queued" in resp.json()["detail"]
+
+
+def test_evaluate_nonexistent_returns_404(client):
+    """evaluate on a nonexistent negotiation_id returns 404."""
+    resp = client.post(f"{_NEGOTIATIONS_URL}/00000000-0000-0000-0000-deadbeef0000/evaluate")
+    assert resp.status_code == 404
+
+
+def test_evaluate_corridor_with_funded_wallets_grants(client):
+    """With wallets that have sufficient balance, a corridor claim should be granted."""
+    from conftest import make_agent
+    make_agent("eval-corridor-w1", balance_usdc=5000.0)
+    make_agent("eval-corridor-w2", balance_usdc=5000.0)
+    make_agent("eval-corridor-w3", balance_usdc=5000.0)
+
+    nid = _post_and_get_id(
+        client, "eval-corridor-agent", "corridor_provisioning",
+        requested_liquidity_usdc=10.0,
+        target_corridor="eval-test corridor",
+    )
+    resp = client.post(f"{_NEGOTIATIONS_URL}/{nid}/evaluate")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "granted"
