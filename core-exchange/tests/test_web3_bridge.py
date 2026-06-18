@@ -341,17 +341,26 @@ class TestSuccessfulSettlement:
         tax: str   = "1.5",
     ) -> tuple[OnchainSettlementResult, MagicMock]:
         """
-        Execute process_onchain_settlement with both transport layers mocked.
+        Execute process_onchain_settlement with all transport layers mocked.
         Returns (result, mock_send) so callers can inspect call args.
+
+        _get_usdc_balance_wei is patched to return a large on-chain balance so
+        the escrow preflight always passes without touching the mock AsyncWeb3
+        contract chain (which is not awaitable via plain MagicMock).
         """
         bridge  = _make_bridge()
         mock_w3 = _make_mock_w3(gas_price_gwei=1.0, nonce=self._BASE_NONCE)
 
+        # Sufficient on-chain escrow: 10^15 token-units >> any test gross amount.
+        _ESCROW_BALANCE_WEI = 10 ** 15
+
         with patch.object(bridge, "_get_w3", new_callable=AsyncMock) as mock_get_w3, \
+             patch.object(bridge, "_get_usdc_balance_wei", new_callable=AsyncMock) as mock_bal, \
              patch.object(bridge, "_build_and_send_transfer", new_callable=AsyncMock) as mock_send:
 
-            mock_get_w3.return_value      = mock_w3
-            mock_send.side_effect         = [self._NET_HASH, self._TAX_HASH]
+            mock_get_w3.return_value = mock_w3
+            mock_bal.return_value    = _ESCROW_BALANCE_WEI
+            mock_send.side_effect    = [self._NET_HASH, self._TAX_HASH]
 
             result = _run(
                 bridge.process_onchain_settlement(

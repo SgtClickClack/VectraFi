@@ -89,9 +89,10 @@ def _simulate_chain(
 
     total_slippage  = (volume * slip).quantize(Decimal("0.00000001"))
     slip_floor      = (total_slippage / Decimal(n)).quantize(Decimal("0.00000001"))
-    # Deduct gas friction from expected output (n hops × cost per hop).
-    total_gas       = (_GAS_COST_PER_HOP * Decimal(n)).quantize(Decimal("0.00000001"))
-    expected_output = volume - total_slippage - total_gas
+    # expected_output is the value the trader receives after slippage.
+    # Gas is captured in per_leg_cost (the viability floor) rather than
+    # deducted from the output, keeping both quantities independently meaningful.
+    expected_output = volume - total_slippage
 
     # ------------------------------------------------------------------
     # Batch-fetch all wallets in one query; build agent_id → wallet map.
@@ -175,7 +176,7 @@ def _simulate_chain(
                 rejection = (
                     f"step {i}: agent '{agent_id}' balance "
                     f"{float(balance_before):.6f} USDC is below "
-                    f"per-leg cost floor {float(per_leg_cost):.6f} USDC "
+                    f"slippage floor {float(per_leg_cost):.6f} USDC "
                     f"(slip={float(slip_floor):.6f} + gas={float(_GAS_COST_PER_HOP):.6f})"
                 )
 

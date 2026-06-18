@@ -49,6 +49,13 @@ if str(_THIS_DIR) not in sys.path:
     sys.path.insert(0, str(_THIS_DIR))
 
 from config import DEFAULT_USDC_BALANCE, PROTOCOL_DOMAIN
+from services.route_evaluator import (
+    compute_top_up,
+    is_route_viable_local,
+    needs_server_rebalance,
+    select_equalization_donor,
+    tax_covers_overhead,
+)
 from services.web3_provider import get_on_chain_eth_balance, init_web3_provider, is_live_mode
 
 # ---------------------------------------------------------------------------
@@ -156,23 +163,31 @@ class DeskState:
 
 @dataclass
 class SwarmStats:
-    iterations:       int = 0
-    route_checks:     int = 0
-    viable_routes:    int = 0
-    transfers_fired:  int = 0
-    transfers_ok:     int = 0
-    transfers_err:    int = 0
-    rebalances_fired: int = 0
-    start_time:       float = field(default_factory=time.perf_counter)
+    iterations:          int = 0
+    route_checks:        int = 0
+    route_checks_local:  int = 0   # short-circuited by local pre-check (no HTTP call)
+    viable_routes:       int = 0
+    transfers_fired:     int = 0
+    transfers_ok:        int = 0
+    transfers_err:       int = 0
+    rebalances_fired:    int = 0
+    equalization_count:  int = 0
+    equalization_volume: float = 0.0
+    start_time:          float = field(default_factory=time.perf_counter)
 
     def elapsed_s(self) -> float:
         return time.perf_counter() - self.start_time
 
     def summary(self) -> str:
+        saved_pct = (
+            100.0 * self.route_checks_local / max(1, self.route_checks + self.route_checks_local)
+        )
         return (
             f"iter={self.iterations}  "
             f"route_checks={self.route_checks}  viable={self.viable_routes}  "
+            f"local_skip={self.route_checks_local} ({saved_pct:.0f}% overhead saved)  "
             f"xfers={self.transfers_ok}/{self.transfers_fired}  "
+            f"eq={self.equalization_count}  "
             f"rebalances={self.rebalances_fired}  "
             f"uptime={self.elapsed_s():.0f}s"
         )
@@ -290,6 +305,34 @@ async def check_route(
     desks:  list[DeskState],
     stats:  SwarmStats,
 ) -> bool:
+    """
+    Two-stage route viability check (Cognitive Token Cost Throttling).
+
+    Stage 1 — local pre-check (O(n), zero I/O):
+        Uses cached desk.balance_usdc values to detect obviously non-viable
+        routes before making any HTTP call.  When any desk is provably below
+        the per-leg cost floor the HTTP call is skipped entirely and the
+        result is recorded as a locally-resolved check.
+
+    Stage 2 — authoritative API call (HTTP, SQLAlchemy, PENDING_SYNC check):
+        Executed only when the local pre-check is inconclusive (all balances
+        appear sufficient).  This is the authoritative verdict and verifies
+        live DB balances and PENDING_SYNC locks that the cache cannot see.
+
+    The ratio of local_skip to total checks directly measures overhead
+    savings: every skipped HTTP call avoids ~10 ms of API overhead.
+    """
+    # Stage 1: local pre-check using cached desk balances.
+    balances = [d.balance_usdc for d in desks]
+    if not is_route_viable_local(balances, _TRANSFER_AMOUNT, _SAFETY_FLOOR_PCT):
+        stats.route_checks_local += 1
+        log.debug(
+            "ROUTE-CHECK  LOCAL-SKIP  chain=%s  (balance pre-check failed — no HTTP call)",
+            " → ".join(d.name for d in desks),
+        )
+        return False
+
+    # Stage 2: authoritative HTTP check — only reached when local state is plausible.
     chain = [d.agent_id for d in desks]
     body  = {
         "entry_asset":           "USDC",
@@ -462,45 +505,47 @@ async def _equalize_stalled_desks(
     stats:  SwarmStats,
 ) -> None:
     """
-    Pre-iteration capital equalization pass.
+    Pre-iteration capital equalization pass — fully programmatic (no HTTP reads).
 
-    For each desk below _EQ_STALL_THRESHOLD_USDC, select the most-liquid donor
-    desk and fire a direct settlement transfer to top it up to _EQ_TARGET_USDC.
+    Uses route_evaluator helpers to make all decisions in O(n) pure Python
+    over cached DeskState values:
+      - compute_top_up()              → determine whether a desk is stalled
+      - select_equalization_donor()   → pick best donor using cached eth_balance
+      - tax_covers_overhead()         → guard: skip if tax < transfer cost
 
-    Donor eligibility requires:
-      1. Sufficient USDC surplus so the donor stays above _EQ_TARGET_USDC after
-         the transfer.
-      2. A cached ETH gas balance of at least _CB_MIN_GAS_ETH * _EQ_GAS_SAFETY_MULT
-         (set to 0 and bypassed in dry-run / non-live mode so sandbox runs are
-         unaffected).
+    No additional RPC or API calls are made for the decision phase.  Only
+    fire_transfer() itself causes an HTTP call (the actual settlement POST),
+    and only when all local checks pass.
 
-    Uses fire_transfer with amount_override so the transfer is sized to exactly
-    bridge the gap to _EQ_TARGET_USDC, uses tx_type="swarm_equalization" for
-    audit visibility, and skips organic jitter (this is a deliberate operation).
-
-    If no donor qualifies, logs a WARNING and lets the server-side rebalance API
-    handle the deficit at the end of the iteration as a secondary fallback.
+    Equalization transfers are tracked in stats (equalization_count /
+    equalization_volume) so the telemetry dashboard can surface them
+    separately from organic swarm_transfer activity.
     """
     gas_floor = _CB_MIN_GAS_ETH * _EQ_GAS_SAFETY_MULT
+    live      = is_live_mode() and not _DRY_RUN
 
     for desk in desks:
-        if desk.balance_usdc >= _EQ_STALL_THRESHOLD_USDC:
+        top_up = compute_top_up(
+            desk.balance_usdc, _EQ_STALL_THRESHOLD_USDC, _EQ_TARGET_USDC
+        )
+        if top_up is None:
+            continue  # not stalled
+
+        # Guard: equalization only makes economic sense when the protocol tax
+        # collected on the top-up transfer exceeds the cost of the API call.
+        # A top-up below this threshold is deferred to the server-side rebalance.
+        if not tax_covers_overhead(top_up, estimated_overhead_usdc=0.001):
+            log.debug(
+                "EQUALIZE  %-7s  top_up=%.4f USDC too small — tax < overhead, deferring",
+                desk.name, top_up,
+            )
             continue
 
-        top_up = _EQ_TARGET_USDC - desk.balance_usdc
+        donor = select_equalization_donor(
+            desks, desk, top_up, _EQ_TARGET_USDC, gas_floor, live
+        )
 
-        # In sandbox / dry-run mode eth_balance is 0.0 (guard never ran); bypass
-        # the gas check so the equalization still fires for stress-test runs.
-        live = is_live_mode() and not _DRY_RUN
-
-        donors = [
-            d for d in desks
-            if d is not desk
-            and d.balance_usdc > _EQ_TARGET_USDC + top_up   # stays above target after donating
-            and (not live or d.eth_balance >= gas_floor)     # gas guard only enforced in live mode
-        ]
-
-        if not donors:
+        if donor is None:
             log.warning(
                 "EQUALIZE  %-7s  stalled at %.2f USDC — no eligible donor "
                 "(need donor_usdc > %.2f and%s eth_balance >= %.6f ETH)",
@@ -511,7 +556,6 @@ async def _equalize_stalled_desks(
             )
             continue
 
-        donor = max(donors, key=lambda d: d.balance_usdc)
         log.info(
             "EQUALIZE  %-7s  balance=%.2f < threshold=%.2f — "
             "requesting %.2f USDC top-up from %-7s (donor_bal=%.2f  donor_eth=%.6f)",
@@ -519,6 +563,8 @@ async def _equalize_stalled_desks(
             top_up, donor.name, donor.balance_usdc, donor.eth_balance,
         )
         await fire_transfer(client, donor, desk, stats, amount_override=top_up)
+        stats.equalization_count  += 1
+        stats.equalization_volume += top_up
 
 
 # ---------------------------------------------------------------------------
@@ -609,16 +655,19 @@ async def _post_heartbeat(
 ) -> None:
     """Push swarm state to the dashboard's in-memory store (fire-and-forget)."""
     body = {
-        "iterations":    stats.iterations,
-        "route_checks":  stats.route_checks,
-        "viable_routes": stats.viable_routes,
-        "dry_run":       _DRY_RUN,
+        "iterations":               stats.iterations,
+        "route_checks":             stats.route_checks,
+        "viable_routes":            stats.viable_routes,
+        "dry_run":                  _DRY_RUN,
+        "equalization_count":       stats.equalization_count,
+        "equalization_volume_usdc": stats.equalization_volume,
         "desks": [
             {
                 "name":          d.name,
                 "balance_usdc":  d.balance_usdc,
                 "transfers_ok":  d.transfers_ok,
                 "transfers_err": d.transfers_err,
+                "eth_balance":   d.eth_balance,
             }
             for d in desks
         ],
@@ -684,9 +733,12 @@ async def swarm_loop(desks: list[DeskState]) -> None:
                         )
 
                 # 3. Rebalance any desk whose balance has fallen below floor
+                # needs_server_rebalance() is an O(1) pure-Python guard that
+                # avoids the HTTP call when the desk is clearly above threshold.
                 for desk in desks:
-                    floor = _REBALANCE_VOLUME * _SAFETY_FLOOR_PCT
-                    if desk.balance_usdc < floor:
+                    if needs_server_rebalance(
+                        desk.balance_usdc, _REBALANCE_VOLUME, _SAFETY_FLOOR_PCT
+                    ):
                         await maybe_rebalance(client, desk, stats)
 
             # 4. Progress heartbeat every 10 iterations
