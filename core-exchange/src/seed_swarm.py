@@ -49,7 +49,7 @@ if str(_THIS_DIR) not in sys.path:
     sys.path.insert(0, str(_THIS_DIR))
 
 from config import DEFAULT_USDC_BALANCE, PROTOCOL_DOMAIN
-from services.web3_provider import get_on_chain_eth_balance, is_live_mode
+from services.web3_provider import get_on_chain_eth_balance, init_web3_provider, is_live_mode
 
 # ---------------------------------------------------------------------------
 # HD Wallet derivation (BIP-44, coin type 60 — Ethereum)
@@ -585,10 +585,30 @@ async def swarm_loop(desks: list[DeskState]) -> None:
                         d.consecutive_errors,
                     )
                 await _post_heartbeat(client, desks, stats)
-                await _check_gas_guard(desks)
+                try:
+                    await _check_gas_guard(desks)
+                except CircuitBreakerTripped:
+                    raise
+                except Exception as exc:
+                    log.critical(
+                        "GAS-GUARD  unexpected error — treating as emergency halt: %s", exc
+                    )
+                    raise CircuitBreakerTripped(
+                        f"gas guard raised unexpectedly: {exc}"
+                    ) from exc
 
             # 5. Circuit-breaker evaluation (every iteration)
-            _check_circuit_breakers(desks)
+            try:
+                _check_circuit_breakers(desks)
+            except CircuitBreakerTripped:
+                raise
+            except Exception as exc:
+                log.critical(
+                    "CIRCUIT-BREAKER  unexpected error — treating as emergency halt: %s", exc
+                )
+                raise CircuitBreakerTripped(
+                    f"circuit breaker check raised unexpectedly: {exc}"
+                ) from exc
 
             # 6. Sleep for the remainder of the poll interval
             elapsed = time.perf_counter() - loop_start
@@ -617,6 +637,12 @@ async def main() -> None:
                  _DESK_HD_PATHS["Alpha"], _DESK_HD_PATHS["Beta"], _DESK_HD_PATHS["Gamma"])
     if _DRY_RUN:
         log.info("  DRY-RUN mode active — transfers will be skipped")
+
+    # Initialise the Web3 provider for this process so that is_live_mode() and
+    # _check_gas_guard() reflect the actual RPC config.  The API server does this
+    # inside init_db(); the swarm runs as a separate process and must do it here.
+    init_web3_provider()
+    log.info("  Web3 mode: %s", "live_rpc" if is_live_mode() else "sandbox")
 
     # Preflight: confirm exchange is reachable
     async with httpx.AsyncClient(timeout=httpx.Timeout(3.0)) as probe:
