@@ -50,9 +50,10 @@ from schemas import (
 logger = logging.getLogger("vectrafi.arbitrage")
 router = APIRouter(prefix="/api/v1/arbitrage", tags=["arbitrage"])
 
-_RELAY_HOPS    = 3
-_CANDIDATE_CAP = 10    # top-N agents queried as relay candidates
-_TAX_NET       = Decimal("0.985")    # 1 − 1.5%
+_RELAY_HOPS         = 3
+_CANDIDATE_CAP      = 10              # top-N agents queried as relay candidates
+_TAX_NET            = Decimal("0.985")  # 1 − 1.5%
+_GAS_COST_PER_HOP   = Decimal("0.05")  # static L2 gas friction per leg (USDC)
 
 
 # ---------------------------------------------------------------------------
@@ -68,8 +69,11 @@ def _simulate_chain(
     """
     Dry-run viability check on an ordered agent chain.
 
-    Runs inside a savepoint that is ALWAYS rolled back, so no ledger rows are
-    written or modified regardless of the result.
+    Pure read-only: fetches all wallets in a single batched IN query and
+    evaluates balance sufficiency in Python — no savepoint, no DB writes,
+    no rollback required.
+
+    Per-leg cost = slippage_floor + GAS_COST_PER_HOP.
 
     Returns:
         (viable, steps, total_slippage_usdc, expected_output_usdc, rejection_reason)
@@ -80,70 +84,95 @@ def _simulate_chain(
 
     total_slippage  = (volume * slip).quantize(Decimal("0.00000001"))
     slip_floor      = (total_slippage / Decimal(n)).quantize(Decimal("0.00000001"))
-    expected_output = volume - total_slippage
+    # Deduct gas friction from expected output (n hops × cost per hop).
+    total_gas       = (_GAS_COST_PER_HOP * Decimal(n)).quantize(Decimal("0.00000001"))
+    expected_output = volume - total_slippage - total_gas
 
+    # ------------------------------------------------------------------
+    # Batch-fetch all wallets in one query; build agent_id → wallet map.
+    # ------------------------------------------------------------------
+    wallet_rows: list[AgentWallet] = (
+        db.query(AgentWallet)
+        .filter(AgentWallet.agent_id.in_(chain))
+        .all()
+    )
+    wallet_map: dict[str, AgentWallet] = {w.agent_id: w for w in wallet_rows}
+
+    # Batch-fetch all PENDING_SYNC agent IDs touching any chain member.
+    pending_rows = (
+        db.query(SettlementTransaction.sender_id)
+        .filter(
+            SettlementTransaction.on_chain_status == "PENDING_SYNC",
+            SettlementTransaction.sender_id.in_(chain),
+        )
+        .union(
+            db.query(SettlementTransaction.receiver_id)
+            .filter(
+                SettlementTransaction.on_chain_status == "PENDING_SYNC",
+                SettlementTransaction.receiver_id.in_(chain),
+            )
+        )
+        .all()
+    )
+    blocked_ids: set[str] = {row[0] for row in pending_rows}
+
+    # ------------------------------------------------------------------
+    # Pure in-memory evaluation — no DB writes, no savepoint needed.
+    # ------------------------------------------------------------------
     steps: list[ArbitrageStepResult] = []
     rejection: str | None = None
+    # Track running balance so cumulative deductions reflect realistic state.
+    running_balance: dict[str, Decimal] = {}
 
-    savepoint = db.begin_nested()
-    try:
-        for i, agent_id in enumerate(chain):
-            wallet = db.get(AgentWallet, agent_id)
+    per_leg_cost = (slip_floor + _GAS_COST_PER_HOP).quantize(Decimal("0.00000001"))
 
-            if wallet is None:
-                steps.append(ArbitrageStepResult(
-                    step=i, agent_id=agent_id,
-                    balance_usdc=0.0, slippage_floor_usdc=float(slip_floor),
-                    balance_sufficient=False, pending_sync_blocked=False,
-                    wallet_found=False,
-                ))
-                if rejection is None:
-                    rejection = f"step {i}: agent '{agent_id}' has no registered wallet"
-                continue
+    for i, agent_id in enumerate(chain):
+        wallet = wallet_map.get(agent_id)
 
-            pending_count: int = (
-                db.query(func.count(SettlementTransaction.tx_id))
-                .filter(
-                    SettlementTransaction.on_chain_status == "PENDING_SYNC",
-                    or_(
-                        SettlementTransaction.sender_id   == agent_id,
-                        SettlementTransaction.receiver_id == agent_id,
-                    ),
-                )
-                .scalar()
-                or 0
-            )
-            is_blocked     = pending_count > 0
-            balance_before = Decimal(str(wallet.balance_usdc))
-            sufficient     = balance_before >= slip_floor
-
-            # Simulate per-leg slippage deduction (savepoint rolls this back).
-            wallet.balance_usdc = balance_before - slip_floor
-            db.flush()
-
+        if wallet is None:
             steps.append(ArbitrageStepResult(
                 step=i, agent_id=agent_id,
-                balance_usdc=float(balance_before),
-                slippage_floor_usdc=float(slip_floor),
-                balance_sufficient=sufficient,
-                pending_sync_blocked=is_blocked,
-                wallet_found=True,
+                balance_usdc=0.0, slippage_floor_usdc=float(slip_floor),
+                balance_sufficient=False, pending_sync_blocked=False,
+                wallet_found=False,
             ))
-
             if rejection is None:
-                if is_blocked:
-                    rejection = (
-                        f"step {i}: agent '{agent_id}' has {pending_count} "
-                        "PENDING_SYNC transaction(s) blocking participation"
-                    )
-                elif not sufficient:
-                    rejection = (
-                        f"step {i}: agent '{agent_id}' balance "
-                        f"{float(balance_before):.6f} USDC is below "
-                        f"slippage floor {float(slip_floor):.6f} USDC"
-                    )
-    finally:
-        savepoint.rollback()
+                rejection = f"step {i}: agent '{agent_id}' has no registered wallet"
+            continue
+
+        is_blocked = agent_id in blocked_ids
+
+        # Use running balance so each leg reflects prior deductions in this chain.
+        if agent_id not in running_balance:
+            running_balance[agent_id] = Decimal(str(wallet.balance_usdc))
+        balance_before = running_balance[agent_id]
+        sufficient     = balance_before >= per_leg_cost
+
+        # Deduct cost in-memory (not persisted).
+        running_balance[agent_id] = balance_before - per_leg_cost
+
+        steps.append(ArbitrageStepResult(
+            step=i, agent_id=agent_id,
+            balance_usdc=float(balance_before),
+            slippage_floor_usdc=float(slip_floor),
+            balance_sufficient=sufficient,
+            pending_sync_blocked=is_blocked,
+            wallet_found=True,
+        ))
+
+        if rejection is None:
+            if is_blocked:
+                rejection = (
+                    f"step {i}: agent '{agent_id}' has PENDING_SYNC "
+                    "transaction(s) blocking participation"
+                )
+            elif not sufficient:
+                rejection = (
+                    f"step {i}: agent '{agent_id}' balance "
+                    f"{float(balance_before):.6f} USDC is below "
+                    f"per-leg cost floor {float(per_leg_cost):.6f} USDC "
+                    f"(slip={float(slip_floor):.6f} + gas={float(_GAS_COST_PER_HOP):.6f})"
+                )
 
     viable = all(
         s.wallet_found and s.balance_sufficient and not s.pending_sync_blocked
